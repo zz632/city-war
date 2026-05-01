@@ -112,7 +112,6 @@ python3 app.py
 | macOS | 双击 `launcher/macos/CityWarLauncher.command` |
 | Linux | `bash launcher/linux/launcher.sh start` |
 | Windows | 双击 `launcher/windows/CityWarLauncher.bat` |
-| 全平台（仅启动服务器） | `python3 app.py` |
 
 启动器会自动检查 Python、安装依赖、启动服务器并打开浏览器。
 
