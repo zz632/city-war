@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>游戏 - 城池战争</title>
+    <link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body data-page="game">
+    <div class="game-wrap" id="gameRoomId" data-roomid="{{ room_id }}">
+        <!-- 顶部状态 -->
+        <div class="game-top">
+            <div class="stat-box">
+                <div class="stat-val" id="statRound">1</div>
+                <div class="stat-lbl">回合</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-val" id="statCities">100</div>
+                <div class="stat-lbl">城池</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-val" id="statCards">0</div>
+                <div class="stat-lbl">技能卡</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-val" id="statPhase">行动</div>
+                <div class="stat-lbl">阶段</div>
+            </div>
+        </div>
+
+        <!-- 主体 -->
+        <div class="game-body">
+            <!-- 左侧：玩家 + 操作 -->
+            <div class="game-left">
+                <div class="section-title" style="margin-bottom:10px">场上玩家</div>
+                <div class="player-grid" id="playerGrid"></div>
+
+                <!-- 观战席 -->
+                <div id="spectatorArea" style="display:none;margin-top:10px">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                        <div class="section-title" style="margin-bottom:0">观战席</div>
+                        <div style="font-size:12px;color:var(--text-dim)">房间号 <span id="specRoomId" style="color:var(--primary);font-weight:700;font-size:14px"></span></div>
+                    </div>
+                    <div id="spectatorList" style="font-size:13px;color:var(--text-dim);line-height:1.8"></div>
+                </div>
+
+                <!-- 上帝视角面板（仅观战者可见） -->
+                <div class="god-view" id="godViewPanel" style="display:none;margin-top:10px">
+                    <div class="gv-header">
+                        <span class="gv-title">上帝视角</span>
+                        <button class="gv-toggle-btn" id="gvToggleBtn" onclick="toggleGodView()">展开</button>
+                    </div>
+                    <div class="gv-body" id="godViewContent"></div>
+                </div>
+
+                <!-- 操作面板 -->
+                <div class="action-panel" style="margin-top:16px" id="actionPanel">
+                    <div class="section-title" style="margin-bottom:10px" id="actionPanelTitle">选择行动</div>
+                    <div class="action-grid" id="actionGrid">
+                        <button class="act-btn" data-action="attack">
+                            <svg viewBox="0 0 24 24"><path d="M14.5 17.5L3 6V3h3l11.5 11.5M13 19l6-6M16 16l4 4M8 8l-4-4"/></svg>
+                            攻城
+                        </button>
+                        <button class="act-btn" data-action="defend">
+                            <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                            守城
+                        </button>
+                        <button class="act-btn" data-action="jungle">
+                            <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zM8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>
+                            打野
+                        </button>
+                        <button class="act-btn" data-action="duel">
+                            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="1"/></svg>
+                            约战
+                        </button>
+                    </div>
+                    <!-- 后期操作（默认隐藏） -->
+                    <div id="lateActions" style="display:none;margin-top:8px">
+                        <div class="action-grid">
+                            <button class="act-btn" data-action="repair">
+                                <svg viewBox="0 0 24 24"><path d="M12 2v10l4.5 4.5M12 22a10 10 0 010-20 10 10 0 010 20z"/></svg>
+                                修城
+                            </button>
+                            <button class="act-btn" data-action="alliance">
+                                <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 108 0 4 4 0 00-8 0zm12 14v-2a4 4 0 00-3-3.87"/></svg>
+                                结盟
+                            </button>
+                        </div>
+                    </div>
+                    <!-- 猜拳按钮（默认隐藏） -->
+                    <div id="gestureArea" style="display:none;margin-top:10px">
+                        <div class="section-title" style="margin-bottom:8px">选择手势</div>
+                        <div class="action-grid">
+                            <button class="act-btn gesture-btn" data-gesture="rock">
+                                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></svg>
+                                石头
+                            </button>
+                            <button class="act-btn gesture-btn" data-gesture="paper">
+                                <svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+                                布
+                            </button>
+                            <button class="act-btn gesture-btn" data-gesture="scissors">
+                                <svg viewBox="0 0 24 24"><path d="M6 9l6-6 6 6M12 3v18"/></svg>
+                                剪刀
+                            </button>
+                        </div>
+                    </div>
+                    <!-- 提示/已提交状态 -->
+                    <div id="actionHint" style="display:none;margin-top:10px;text-align:center;font-size:13px;color:var(--text-dim);padding:8px;background:var(--bg-input);border-radius:6px"></div>
+                </div>
+
+                <!-- 约战面板（默认隐藏） -->
+                <div class="action-panel" style="margin-top:16px;display:none" id="duelPanel">
+                    <div class="section-title" style="margin-bottom:10px;color:#ef4444">约战 - 俄罗斯轮盘</div>
+                    <div id="duelInfo" style="font-size:14px;line-height:1.8;color:var(--text-dim);margin-bottom:12px"></div>
+                    <div id="duelChambers" style="display:flex;gap:6px;justify-content:center;margin-bottom:16px"></div>
+                    <div id="duelTurnInfo" style="text-align:center;font-size:15px;font-weight:600;margin-bottom:12px"></div>
+                    <div id="duelButtons" style="display:none;gap:8px;justify-content:center;align-items:center">
+                        <span style="font-size:14px;color:var(--text-dim)">开枪数：</span>
+                        <input type="number" id="duelShotsInput" class="field-input" style="width:70px;text-align:center;padding:6px 8px" min="1" max="6" value="1">
+                        <button class="btn btn-danger" style="padding:6px 16px" onclick="shootDuelFromInput()">开枪</button>
+                    </div>
+                    <div id="duelWaitInfo" style="display:none;text-align:center;font-size:14px;color:var(--text-dim);padding:16px">
+                        约战进行中，请等待...
+                    </div>
+                </div>
+
+                <!-- 会议面板（默认隐藏） -->
+                <div class="action-panel" style="margin-top:16px;display:none" id="meetingPanel">
+                    <div class="section-title" style="margin-bottom:10px">本轮小结</div>
+                    <div id="meetingMessages" style="font-size:14px;line-height:1.8;color:var(--text-dim);margin-bottom:16px"></div>
+                    <button class="btn btn-primary btn-block btn-lg" id="continueBtn">
+                        继续行动
+                    </button>
+                </div>
+
+                <!-- 拍卖面板（默认隐藏） -->
+                <div class="action-panel" style="margin-top:16px;display:none" id="auctionPanel">
+                    <div class="section-title" style="margin-bottom:10px">拍卖会</div>
+                    <div class="auction-card" id="auctionSkillCard">
+                        <div class="auction-skill-name" id="auctionSkillName"></div>
+                        <div class="auction-skill-desc" id="auctionSkillDesc"></div>
+                    </div>
+                    <div class="auction-info">
+                        <div class="auction-bid-row">
+                            <span>当前出价：<strong id="auctionCurrentBid">0</strong> 城</span>
+                            <span id="auctionHighestBidder" style="color:var(--primary);font-size:12px"></span>
+                        </div>
+                        <div class="auction-countdown" id="auctionCountdown">30s</div>
+                    </div>
+                    <div class="auction-bid-area" id="auctionBidArea">
+                        <input type="number" id="auctionBidInput" class="field-input" style="width:100px;text-align:center;padding:6px" min="0" value="">
+                        <button id="auctionBidBtn" class="btn btn-primary" style="padding:6px 16px;font-size:13px" onclick="submitAuctionBid()">出价</button>
+                        <button id="auctionPassBtn" class="btn btn-outline" style="padding:6px 16px;font-size:13px" onclick="onAuctionPass()">跳过</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：聊天 -->
+            <div class="game-right">
+                <div class="card" style="flex:1;display:flex;flex-direction:column;min-height:0">
+                    <div class="section-title">聊天</div>
+                    <div class="chat-messages" id="chatMessages" style="flex:1"></div>
+                    <div class="chat-bar">
+                        <input type="text" id="chatInput" class="field-input" placeholder="消息..." autocomplete="off">
+                        <button id="chatSend" class="btn btn-primary">发</button>
+                    </div>
+                </div>
+
+                <!-- 技能卡 -->
+                <div class="card" id="skillCardArea" style="display:none">
+                    <div class="section-title">技能卡</div>
+                    <div id="skillCards"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="/static/js/main.js"></script>
+</body>
+</html>

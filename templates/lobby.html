@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>大厅 - 城池战争</title>
+    <link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body data-page="lobby">
+    <div class="page-wrap">
+        <!-- 房间号 -->
+        <div class="lobby-room-id" id="lobbyRoomId" data-roomid="{{ room_id }}">{{ room_id }}</div>
+        <div class="lobby-room-label">房间号 · 分享给好友加入</div>
+
+        <!-- 玩家列表 -->
+        <div class="card">
+            <div class="section-title">
+                <svg style="width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;vertical-align:-2px" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+                玩家列表
+            </div>
+            <ul class="player-list" id="playerList">
+                <li class="player-item">
+                    <span style="color:var(--text-dim)">等待玩家加入...</span>
+                </li>
+            </ul>
+        </div>
+
+        <!-- 聊天 -->
+        <div class="card" style="display:flex;flex-direction:column;min-height:160px">
+            <div class="section-title">聊天</div>
+            <div class="chat-messages" id="chatMessages"></div>
+            <div class="chat-bar">
+                <input type="text" id="chatInput" class="field-input" placeholder="说点什么..." autocomplete="off">
+                <button id="chatSend" class="btn btn-primary">发送</button>
+            </div>
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="lobby-footer">
+            <button id="startBtn" class="btn btn-green btn-lg" style="flex:1;display:none">
+                <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                <span>开始游戏</span>
+            </button>
+            <button id="urgeBtn" class="btn btn-secondary btn-lg" style="flex:1;display:none">
+                <svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>
+                <span>催促房主开始</span>
+            </button>
+        </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="/static/js/main.js"></script>
+</body>
+</html>
