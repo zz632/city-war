@@ -93,7 +93,11 @@
 
 - Python 3.8+
 
-依赖已内置在 `vendor/` 目录中，无需 pip 安装。
+### 安装依赖
+
+```bash
+python -m pip install -r requirements.txt
+```
 
 ### 启动游戏
 

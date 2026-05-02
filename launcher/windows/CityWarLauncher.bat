@@ -1,6 +1,8 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
+@echo off
 title 城池战争游戏启动器
+@echo off
 
 set "APP_NAME=城池战争"
 set "APP_DIR=%~dp0"
@@ -15,7 +17,9 @@ echo.
 call :check_python
 if errorlevel 1 goto :error
 
-:: 启动服务器（依赖由 app.py 自动安装）
+:: 安装依赖
+call :install_deps
+if errorlevel 1 goto :error
 
 :: 启动服务器
 call :start_server
@@ -50,6 +54,14 @@ goto :end
         set "PYTHON_CMD=python"
     )
     for /f "tokens=*" %%a in ('%PYTHON_CMD% --version 2^>^&1') do echo [OK] 找到: %%a
+    exit /b 0
+
+:install_deps
+    echo 检查并安装依赖...
+    %PYTHON_CMD% -m pip install -r "..\..\requirements.txt" --force-reinstall -q
+    if errorlevel 1 (
+        echo [警告] 依赖安装可能遇到问题，尝试继续...
+    )
     exit /b 0
 
 :start_server

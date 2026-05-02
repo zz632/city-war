@@ -199,7 +199,14 @@ main() {
         exit 1
     fi
 
-    # 启动服务器（依赖由 app.py 自动安装）
+    # 安装依赖
+    print_info "检查并安装依赖..."
+    $PYTHON_CMD -m pip install -r "$PROJECT_DIR/requirements.txt" --force-reinstall -q
+    if [ $? -ne 0 ]; then
+        print_warning "依赖安装可能遇到问题，尝试继续..."
+    fi
+
+    # 启动服务器
     start_server
 
     # 清理

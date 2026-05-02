@@ -34,7 +34,15 @@ check_python() {
 }
 
 # 安装依赖
-# 启动服务器（依赖由 app.py 自动安装）
+install_deps() {
+    print_msg "检查并安装依赖..." "$YELLOW"
+    $PYTHON_CMD -m pip install -r "$APP_DIR/requirements.txt" --force-reinstall -q
+    if [ $? -ne 0 ]; then
+        print_msg "依赖安装可能遇到问题，尝试继续..." "$YELLOW"
+    fi
+}
+
+# 启动服务器
 start_server() {
     print_msg "正在启动 $APP_NAME 服务器..." "$YELLOW"
     cd "$APP_DIR"
@@ -132,6 +140,7 @@ main() {
     case "${1:-start}" in
         start)
             check_python
+            install_deps
             start_server || exit 1
             open_browser
             print_msg ""
@@ -147,6 +156,7 @@ main() {
             stop_server
             sleep 1
             check_python
+            install_deps
             start_server || exit 1
             open_browser
         status)

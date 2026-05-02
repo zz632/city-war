@@ -6,11 +6,6 @@ CityWar Game - Flask Main Application
 """
 
 import os
-import sys
-
-# 将 vendor 目录加入模块搜索路径（内置依赖，无需 pip 安装）
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'vendor'))
-
 import uuid
 import socket
 from flask import Flask, render_template, request, jsonify
