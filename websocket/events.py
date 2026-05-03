@@ -256,7 +256,7 @@ def _register():
 
     @socketio.on('auction_pass')
     def on_auction_pass(data):
-        """玩家选择跳过拍卖——任一玩家跳过即流拍"""
+        """玩家选择跳过拍卖"""
         room_id = str(data.get('room_id', '')).strip()
         player_id = data.get('player_id', '')
 
@@ -264,8 +264,20 @@ def _register():
         if not room or not room.game_state or not room.game_state.auction:
             return
 
-        # 有玩家跳过即流拍，直接结束拍卖
-        _end_auction(room_id)
+        auction = room.game_state.auction
+
+        # 已有人出价：一人跳过即结束拍卖（出价者获得）
+        if auction['highest_bidder']:
+            _end_auction(room_id)
+            return
+
+        # 无人出价：记录跳过的玩家，所有存活玩家都跳过才流拍
+        if player_id not in auction['passed_players']:
+            auction['passed_players'].append(player_id)
+
+        alive = [p for p in room.players.values() if p.is_alive and not p.is_spectator]
+        if len(auction['passed_players']) >= len(alive):
+            _end_auction(room_id)
 
     @socketio.on('use_skill')
     def on_use_skill(data):

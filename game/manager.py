@@ -411,7 +411,7 @@ class RoomManager:
                 results['actions'][pid] = {'type': 'repair'}
                 results.setdefault('city_changes', {})
                 results['city_changes'][pid] = results['city_changes'].get(pid, 0) + 40
-                results['messages'].append(player.name + ' 修城，获得40城池，此后受到的伤害翻倍')
+                results['messages'].append(player.name + ' 修城，获得40城池，本轮受到的伤害翻倍')
 
         # 处理约战
         for pid, action in game_state.actions.items():
