@@ -156,19 +156,19 @@ class RoomManager:
             return False
 
         # 检查状态效果
-        # 眩晕/跳过回合：无法行动
+        # 眩晕/跳过回合：自动替换为跳过行动（优先于强制攻城）
         if player.status_effects.get('stun') or player.status_effects.get('skip_turn'):
-            return False
+            action_type = 'skip'
 
-        # 强制攻城：只能选择攻城
-        if player.status_effects.get('force_attack') and action_type != 'attack':
+        # 强制攻城：只能选择攻城（skip 不受此限制）
+        if player.status_effects.get('force_attack') and action_type not in ('attack', 'skip'):
             return False
         
         # 检查是否是后期阶段
         is_late_game = game_state.round >= 6
         
         # 验证行动类型
-        valid_actions = ['attack', 'defend', 'jungle', 'duel']
+        valid_actions = ['skip', 'attack', 'defend', 'jungle', 'duel']
         if is_late_game:
             valid_actions.extend(['repair', 'alliance', 'dissolve_alliance'])
 
@@ -401,6 +401,14 @@ class RoomManager:
         for pid, action in game_state.actions.items():
             if action['action_type'] == 'defend':
                 results['actions'][pid] = {'type': 'defend'}
+
+        # 处理跳过行动（眩晕/丰收卡等）
+        for pid, action in game_state.actions.items():
+            if action['action_type'] == 'skip':
+                player = room.players[pid]
+                reason = '被眩晕' if player.status_effects.get('stun') else '跳过回合'
+                results['actions'][pid] = {'type': 'skip', 'reason': reason}
+                results['messages'].append(player.name + ' ' + reason + '，无法行动')
 
         # 处理修城——增加40城池，但下轮受伤翻倍
         for pid, action in game_state.actions.items():
