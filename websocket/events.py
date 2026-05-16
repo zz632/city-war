@@ -445,7 +445,14 @@ def _register():
                     _emit('error_msg', {'message': '目标无效'})
                     return
                 skill_names = '、'.join([s.get('name', '?') for s in target.skills]) if target.skills else '无'
-                action_info = '未提交' if not target.action else str(target.action)
+                target_action = room.game_state.actions.get(target_id)
+                if target_action:
+                    action_names = {'attack': '攻城', 'defend': '守城', 'jungle': '打野', 'duel': '约战', 'repair': '修城', 'alliance': '结盟', 'skip': '跳过'}
+                    action_info = action_names.get(target_action['action_type'], target_action['action_type'])
+                    if target_action.get('target_id') and target_action['target_id'] in room.players:
+                        action_info += ' → ' + room.players[target_action['target_id']].name
+                else:
+                    action_info = '未提交'
                 result_msg += '，侦查 ' + target.name + '：手牌【' + skill_names + '】行动：' + action_info
 
             # 离间卡 - 需要目标，阻止目标攻击自己

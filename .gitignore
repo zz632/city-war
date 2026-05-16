@@ -4,3 +4,5 @@ __pycache__/
 .comate/
 *.log
 update.command
+build/
+dist/

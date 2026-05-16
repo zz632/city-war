@@ -318,6 +318,14 @@ class RoomManager:
                     if target_action and target_action['action_type'] == 'attack' and target_action.get('target_id') == pid:
                         attack_pairs.append((pid, action.get('target_id')))
         
+        # 记录被攻击的玩家（修城时被攻击则修城不生效）
+        attacked_players = set()
+        for pid, action in game_state.actions.items():
+            if action['action_type'] == 'attack':
+                target_id = action.get('target_id')
+                if target_id:
+                    attacked_players.add(target_id)
+
         # 处理攻城伤害
         for pid, action in game_state.actions.items():
             if action['action_type'] == 'attack':
@@ -410,16 +418,21 @@ class RoomManager:
                 results['actions'][pid] = {'type': 'skip', 'reason': reason}
                 results['messages'].append(player.name + ' ' + reason + '，无法行动')
 
-        # 处理修城——增加40城池，但下轮受伤翻倍
+        # 处理修城——增加40城池，本轮受伤翻倍；但被攻击时修城不生效
         for pid, action in game_state.actions.items():
             if action['action_type'] == 'repair':
                 player = room.players[pid]
-                player.change_cities(40)
-                player.repair_active = True
-                results['actions'][pid] = {'type': 'repair'}
-                results.setdefault('city_changes', {})
-                results['city_changes'][pid] = results['city_changes'].get(pid, 0) + 40
-                results['messages'].append(player.name + ' 修城，获得40城池，本轮受到的伤害翻倍')
+                if pid in attacked_players:
+                    player.repair_active = True
+                    results['actions'][pid] = {'type': 'repair_failed'}
+                    results['messages'].append(player.name + ' 修城失败（被攻击），本轮受到的伤害翻倍')
+                else:
+                    player.change_cities(40)
+                    player.repair_active = True
+                    results['actions'][pid] = {'type': 'repair'}
+                    results.setdefault('city_changes', {})
+                    results['city_changes'][pid] = results['city_changes'].get(pid, 0) + 40
+                    results['messages'].append(player.name + ' 修城，获得40城池，本轮受到的伤害翻倍')
 
         # 处理约战
         for pid, action in game_state.actions.items():

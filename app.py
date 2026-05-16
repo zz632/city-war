@@ -15,6 +15,7 @@ from flask_socketio import SocketIO, emit, join_room, leave_room
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'citywar-secret-key-2024'
 app.config['DEBUG'] = False
+app.config['PREFERRED_URL_SCHEME'] = 'http'
 
 # 创建 SocketIO 实例（使用 threading 模式，纯 Python 无 C 扩展依赖）
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60, ping_interval=25)
