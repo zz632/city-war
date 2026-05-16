@@ -89,19 +89,28 @@
 
 ## 安装与运行
 
-### 环境要求
+### 方式一：下载可执行文件（推荐，无需安装 Python）
 
-- Python 3.8+
+前往 [Releases](https://github.com/zz632/city-war/releases) 页面下载对应平台的压缩包：
 
-### 安装依赖
+| 平台 | 文件 |
+|------|------|
+| macOS | `city-war-launcher-macos.zip` |
+| Windows | `city-war-launcher-windows.zip` |
+
+解压后双击可执行文件即可运行，无需安装 Python 或任何依赖。
+
+### 方式二：从源码运行
+
+**环境要求：** Python 3.8+
+
+**安装依赖：**
 
 ```bash
 python -m pip install -r requirements.txt
 ```
 
-### 启动游戏
-
-**命令行启动：**
+**启动游戏：**
 
 ```bash
 python3 app.py
@@ -151,5 +160,5 @@ city-war/
 
 ## 技术栈
 
-- **后端**：Python 3 + Flask + Flask-SocketIO + eventlet
+- **后端**：Python 3 + Flask + Flask-SocketIO（threading 模式）
 - **前端**：HTML5 + CSS3 + Vanilla JavaScript + Socket.IO Client
