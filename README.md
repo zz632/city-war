@@ -98,7 +98,7 @@
 | macOS | `city-war-server-macos.zip` | `city-war-client-macos.zip` |
 | Windows | `city-war-server-windows.zip` | `city-war-client-windows.zip` |
 
-解压后先启动 `citywar-server`（服务器），再启动 `citywar-client`（客户端）即可游戏。局域网内其他设备可直接用浏览器访问服务器地址。
+解压后先启动 `citywar-server`（服务器），再启动 `citywar-client`（客户端）即可游戏。局域网内设备也可直接用浏览器访问服务器地址。
 
 ### 方式二：从源码运行
 
