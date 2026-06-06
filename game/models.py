@@ -232,43 +232,4 @@ class Action:
         }
 
 
-# 技能卡定义
-SKILL_CARDS = {
-    # 攻击类
-    "fire_attack": {"name": "火攻卡", "type": "attack", "description": "对目标造成30城池伤害", "effect": {"damage": 30}},
-    "surprise": {"name": "奇袭卡", "type": "attack", "description": "对目标造成20城池伤害，无视守城", "effect": {"damage": 20, "ignore_defend": True}},
-    "crossbow": {"name": "连弩卡", "type": "attack", "description": "攻击两名不同玩家，各造成15伤害", "effect": {"damage": 15, "multi_target": 2}},
-    "siege": {"name": "破城卡", "type": "attack", "description": "对目标造成50伤害，自己损失10", "effect": {"damage": 50, "self_damage": 10}},
-    "poison": {"name": "毒计卡", "type": "attack", "description": "使目标下回合无法行动", "effect": {"stun": True}},
-    
-    # 防御类
-    "iron_wall": {"name": "铁壁卡", "type": "defense", "description": "下回合受到的伤害减半", "effect": {"damage_reduction": 0.5}},
-    "empty_city": {"name": "空城卡", "type": "defense", "description": "下回合若被攻击，攻击方损失20", "effect": {"reflect": 20}},
-    "reinforce": {"name": "援军卡", "type": "defense", "description": "立即获得25城池", "effect": {"heal": 25}},
-    "feign": {"name": "诈降卡", "type": "defense", "description": "下回合若被攻击，免疫并反弹15", "effect": {"immune": True, "reflect": 15}},
-    "move_capital": {"name": "迁都卡", "type": "defense", "description": "获得15城池，下回合无法被选中", "effect": {"heal": 15, "untargetable": True}},
-    
-    # 资源类
-    "farm": {"name": "屯田卡", "type": "resource", "description": "接下来3回合每回合获得10城池", "effect": {"recurring": 3, "amount": 10}},
-    "trade": {"name": "商路卡", "type": "resource", "description": "从所有其他玩家处各获得5城池", "effect": {"steal": 5}},
-    "tax": {"name": "征税卡", "type": "resource", "description": "获得当前城池数20%的额外城池", "effect": {"percent": 0.2}},
-    "recruit": {"name": "募兵卡", "type": "resource", "description": "立即获得20城池，但下回合必须攻城", "effect": {"heal": 20, "force_attack": True}},
-    "harvest": {"name": "丰收卡", "type": "resource", "description": "获得30城池，但跳过下回合", "effect": {"heal": 30, "skip_turn": True}},
-    
-    # 特殊类
-    "alienate": {"name": "离间卡", "type": "special", "description": "指定两名玩家，他们下回合无法互相攻击", "effect": {"prevent_attack": 2}},
-    "scout": {"name": "侦查卡", "type": "special", "description": "查看一名玩家的手牌和下回合意图", "effect": {"reveal": True}},
-    "disguise": {"name": "伪装卡", "type": "special", "description": "下回合你的行动显示为随机行动", "effect": {"disguise": True}},
-    "first_aid": {"name": "急救卡", "type": "special", "description": "城池<0时使用，获得20城池（救命一次）", "effect": {"emergency_heal": 20}},
-    "reverse": {"name": "逆转卡", "type": "special", "description": "与一名玩家交换城池数（双方需>50）", "effect": {"swap": True, "min_cities": 50}},
-}
-
-
-def get_random_skill() -> Dict:
-    """随机获取一张技能卡"""
-    import random
-    skill_id = random.choice(list(SKILL_CARDS.keys()))
-    skill = SKILL_CARDS[skill_id].copy()
-    skill["id"] = str(uuid.uuid4())
-    skill["skill_type"] = skill_id
-    return skill
+# 技能卡定义 - 已迁移到 skills.py

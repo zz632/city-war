@@ -13,6 +13,7 @@ import threading
 # 运行时由 init_socket_events 注入
 socketio = None
 room_manager = None
+ws_player_map = {}  # request.sid -> player_id
 
 
 def init_socket_events(sio, rm):
@@ -37,6 +38,10 @@ def _register():
     @socketio.on('disconnect')
     def on_disconnect():
         print(f'[WS] 断开: {request.sid}')
+        # 清理 IP 映射（如果玩家断开但没主动离开）
+        player_id = ws_player_map.pop(request.sid, None)
+        if player_id and room_manager.get_player(player_id):
+            room_manager.leave_room(player_id)
 
     # ---- 大厅 ----
 
@@ -52,6 +57,7 @@ def _register():
 
         sio_join(room_id)
         sio_join(player_id)  # 加入私人房间，用于接收定向消息
+        ws_player_map[request.sid] = player_id
         _emit('lobby_update', {
             'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
         }, room=room_id)
@@ -166,6 +172,7 @@ def _register():
 
         sio_join(room_id)
         sio_join(player_id)  # 加入私人房间，用于接收定向消息
+        ws_player_map[request.sid] = player_id
         _emit('game_state', _build_game_state(room))
 
     @socketio.on('submit_action')
@@ -239,14 +246,14 @@ def _register():
         if not player:
             return
 
-        if bid < auction['current_bid'] + 10:
+        if bid < auction['current_price'] + 10:
             _emit('error_msg', {'message': '出价至少比当前价高10'})
             return
         if bid > player.cities:
             _emit('error_msg', {'message': '城池不足'})
             return
 
-        auction['current_bid'] = bid
+        auction['current_price'] = bid
         auction['highest_bidder'] = player_id
 
         _emit('auction_updated', {

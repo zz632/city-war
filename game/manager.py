@@ -5,7 +5,8 @@ import uuid
 import time
 import random
 from typing import Dict, List, Optional
-from .models import Room, Player, GameState, GamePhase, ActionType, get_random_skill
+from .models import Room, Player, GameState, GamePhase, ActionType
+from .skills import get_random_skill
 
 
 class RoomManager:
@@ -14,13 +15,18 @@ class RoomManager:
     def __init__(self):
         self.rooms: Dict[str, Room] = {}
         self.players: Dict[str, Player] = {}
+        self.ip_player_map: Dict[str, str] = {}  # "client_ip:room_id" -> player_sid
     
-    def create_room(self, player_name: str, player_sid: str) -> tuple:
+    def create_room(self, player_name: str, player_sid: str, client_ip: str = '') -> tuple:
         """创建新房间"""
         # 生成4位纯数字房间号，方便分享
         room_id = str(random.randint(1000, 9999))
         while room_id in self.rooms:
             room_id = str(random.randint(1000, 9999))
+
+        # 检查 IP 是否已在该房间中
+        if client_ip and f'{client_ip}:{room_id}' in self.ip_player_map:
+            return None, '该设备已在此房间中，不可重复加入'
         
         player = Player(
             id=player_sid,
@@ -38,13 +44,19 @@ class RoomManager:
         
         self.rooms[room_id] = room
         self.players[player_sid] = player
+        if client_ip:
+            self.ip_player_map[f'{client_ip}:{room_id}'] = player_sid
         
         return room_id, player
     
-    def join_room(self, room_id: str, player_name: str, player_sid: str) -> Optional[Player]:
+    def join_room(self, room_id: str, player_name: str, player_sid: str, client_ip: str = '') -> Optional[Player]:
         """加入房间"""
         room_id = str(room_id).strip()
         if room_id not in self.rooms:
+            return None
+
+        # 检查 IP 是否已在该房间中
+        if client_ip and f'{client_ip}:{room_id}' in self.ip_player_map:
             return None
 
         room = self.rooms[room_id]
@@ -68,6 +80,8 @@ class RoomManager:
 
         room.players[player_sid] = player
         self.players[player_sid] = player
+        if client_ip:
+            self.ip_player_map[f'{client_ip}:{room_id}'] = player_sid
 
         return player
     
@@ -90,6 +104,11 @@ class RoomManager:
         
         if player_sid in self.players:
             del self.players[player_sid]
+        
+        # 清理 IP 映射
+        ips_to_remove = [ip for ip, sid in self.ip_player_map.items() if sid == player_sid]
+        for ip in ips_to_remove:
+            del self.ip_player_map[ip]
         
         # 如果房间空了，删除房间
         if not room.players:
@@ -212,7 +231,7 @@ class RoomManager:
         if action_type == 'duel' and bet > 0:
             target = room.players.get(target_id)
             if target:
-                max_bet = min(player.cities, target.cities) * 0.6
+                max_bet = int(min(player.cities, target.cities) * 0.6)
                 if bet > max_bet:
                     return False
         

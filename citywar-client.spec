@@ -1,21 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""城池战争 - PyInstaller 打包配置"""
+"""城池战争 - 客户端打包配置（pywebview 桌面窗口）"""
 
 import os
-import sys
 
 block_cipher = None
 
-# 获取项目根目录
 ROOT = os.path.abspath('.')
 
-# 需要打包的数据文件
 datas = [
     (os.path.join(ROOT, 'templates'), 'templates'),
     (os.path.join(ROOT, 'static'), 'static'),
 ]
 
-# 隐藏导入（PyInstaller 可能检测不到的模块）
 hiddenimports = [
     'flask_socketio',
     'engineio',
@@ -26,10 +22,15 @@ hiddenimports = [
     'h11',
     'dnspython',
     'bidict',
+    'webview',
+    'webview.platforms',
+    'webview.platforms.cocoa',
+    'webview.platforms.winforms',
+    'webview.platforms.gtk',
 ]
 
 a = Analysis(
-    [os.path.join(ROOT, 'app.py')],
+    [os.path.join(ROOT, 'run.py')],
     pathex=[ROOT],
     binaries=[],
     datas=datas,
@@ -53,14 +54,14 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='citywar',
+    name='citywar-client',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

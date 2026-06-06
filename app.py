@@ -7,62 +7,119 @@ CityWar Game - Flask Main Application
 
 import os
 import uuid
-import socket
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
-# 创建 Flask 应用
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'citywar-secret-key-2024'
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'citywar-secret-key-2024')
 app.config['DEBUG'] = False
 app.config['PREFERRED_URL_SCHEME'] = 'http'
 
-# 创建 SocketIO 实例（使用 threading 模式，纯 Python 无 C 扩展依赖）
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60, ping_interval=25)
 
-# 导入游戏模块
 from game.manager import RoomManager
 from game.models import Player, Room, GameState
 from websocket.events import init_socket_events
 
-# 创建房间管理器实例
 room_manager = RoomManager()
 
-# 注册 Socket.IO 事件
 init_socket_events(socketio, room_manager)
+
+ERROR_PAGE_STYLE = '''
+<style>
+:root {
+    --bg: #0c1222;
+    --bg-card: #151d30;
+    --border: #243050;
+    --text: #e8ecf4;
+    --text-dim: #7a8baa;
+    --primary: #3b82f6;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+}
+.card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 48px 40px;
+    text-align: center;
+    max-width: 420px;
+    width: 90%;
+}
+.error-code {
+    font-size: 64px;
+    font-weight: 800;
+    color: var(--primary);
+    line-height: 1;
+    margin-bottom: 16px;
+}
+.error-title {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+.error-desc {
+    font-size: 14px;
+    color: var(--text-dim);
+    line-height: 1.6;
+}
+</style>
+'''
+
+
+def _error_html(code, title, desc):
+    return f'''<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>{code} - {title}</title>{ERROR_PAGE_STYLE}</head>
+<body>
+<div class="card">
+    <div class="error-code">{code}</div>
+    <div class="error-title">{title}</div>
+    <div class="error-desc">{desc}</div>
+</div>
+</body>
+</html>'''
 
 
 @app.route('/')
 def index():
-    """首页 - 创建/加入房间"""
     return render_template('index.html')
 
 
 @app.route('/lobby/<room_id>')
 def lobby(room_id):
-    """游戏大厅"""
     return render_template('lobby.html', room_id=room_id)
 
 
 @app.route('/game/<room_id>')
 def game(room_id):
-    """游戏主界面"""
     return render_template('game.html', room_id=room_id)
 
 
 @app.route('/api/rooms', methods=['GET', 'POST'])
 def api_rooms():
-    """获取/创建房间"""
     if request.method == 'GET':
         return jsonify({'success': True, 'rooms': room_manager.get_public_rooms()})
 
-    # POST - 创建房间
     data = request.get_json() or {}
     player_name = data.get('player_name', '').strip()
     if not player_name:
         return jsonify({'success': False, 'message': '名字不能为空'}), 400
 
-    room_id, player = room_manager.create_room(player_name, 'p_' + uuid.uuid4().hex[:12])
+    client_ip = request.remote_addr
+    result = room_manager.create_room(player_name, 'p_' + uuid.uuid4().hex[:12], client_ip)
+    if result[0] is None:
+        return jsonify({'success': False, 'message': result[1]}), 403
+
+    room_id, player = result
     return jsonify({
         'success': True,
         'room': {'id': room_id, 'name': room_manager.rooms[room_id].name},
@@ -72,15 +129,15 @@ def api_rooms():
 
 @app.route('/api/rooms/<room_id>/join', methods=['POST'])
 def api_join_room(room_id):
-    """加入房间"""
     data = request.get_json() or {}
     player_name = data.get('player_name', '').strip()
     if not player_name:
         return jsonify({'success': False, 'message': '名字不能为空'}), 400
 
-    player = room_manager.join_room(room_id, player_name, 'p_' + uuid.uuid4().hex[:12])
+    client_ip = request.remote_addr
+    player = room_manager.join_room(room_id, player_name, 'p_' + uuid.uuid4().hex[:12], client_ip)
     if not player:
-        return jsonify({'success': False, 'message': '房间不存在或已满'}), 400
+        return jsonify({'success': False, 'message': '房间不存在、已满或该设备已在此房间中'}), 400
 
     return jsonify({
         'success': True,
@@ -92,7 +149,6 @@ def api_join_room(room_id):
 
 @app.route('/api/room/<room_id>/status', methods=['GET'])
 def get_room_status(room_id):
-    """获取房间状态"""
     room = room_manager.get_room(room_id)
     if not room:
         return jsonify({'success': False, 'message': '房间不存在'}), 404
@@ -105,60 +161,9 @@ def get_room_status(room_id):
 
 @app.errorhandler(404)
 def not_found(error):
-    """404 错误处理"""
-    return jsonify({
-        'success': False,
-        'message': '页面未找到'
-    }), 404
+    return _error_html(404, '页面未找到', '你访问的页面不存在，请检查地址是否正确。'), 404
 
 
 @app.errorhandler(500)
 def internal_error(error):
-    """500 错误处理"""
-    return jsonify({
-        'success': False,
-        'message': '服务器内部错误'
-    }), 500
-
-
-def find_available_port(start_port=5000, max_tries=100):
-    """从 start_port 开始寻找可用端口"""
-    for port in range(start_port, start_port + max_tries):
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(('0.0.0.0', port))
-                return port
-        except OSError:
-            continue
-    return start_port  # 找不到就返回默认值
-
-
-if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser(description='城池战争 CityWar - 本地多人策略游戏')
-    parser.add_argument('--port', type=int, default=None, help='指定端口号（默认自动选择）')
-    args = parser.parse_args()
-
-    # 获取端口，如被占用则自动切换
-    preferred_port = args.port or int(os.environ.get('PORT', 5000))
-    port = find_available_port(preferred_port)
-
-    print(f"""
-╔═════════════════════════════════════════════════════════╗
-║                                                         ║
-║   城池战争 CityWar - 本地多人策略游戏                   ║
-║                                                         ║
-║   本地地址: http://localhost:{port}                       ║
-║                                                         ║
-╚═════════════════════════════════════════════════════════╝
-    """)
-
-    socketio.run(
-        app,
-        host='0.0.0.0',
-        port=port,
-        debug=False,
-        use_reloader=False,
-        allow_unsafe_werkzeug=True,
-        log_output=False
-    )
+    return _error_html(500, '服务器错误', '服务器遇到了问题，请稍后重试。'), 500

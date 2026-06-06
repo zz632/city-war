@@ -6,7 +6,7 @@
 import random
 from typing import Dict, List, Optional, Tuple
 from .models import Player, Room, GameState, Action, SkillCard
-from .skills import SkillManager
+from .skills import get_random_skill
 
 
 class GameLogic:
@@ -14,7 +14,7 @@ class GameLogic:
     
     def __init__(self, room: Room):
         self.room = room
-        self.skill_manager = SkillManager()
+        self.drawn_count = 0
     
     def start_game(self) -> bool:
         """开始游戏"""
@@ -127,10 +127,11 @@ class GameLogic:
         
         if result == 'win':
             # 获胜：抽取技能卡
-            skill = self.skill_manager.draw_skill_card()
+            skill = get_random_skill()
             if skill:
                 player.skills.append(skill)
-                return f"猜拳胜利！你出了{self._gesture_name(gesture)}，系统出了{self._gesture_name(system_gesture)}。获得技能卡：{skill.name}"
+                self.drawn_count += 1
+                return f"猜拳胜利！你出了{self._gesture_name(gesture)}，系统出了{self._gesture_name(system_gesture)}。获得技能卡：{skill['name']}"
             else:
                 return f"猜拳胜利！但技能卡已抽完"
         else:
@@ -436,9 +437,9 @@ class GameLogic:
         for player in self.room.players.values():
             expired_skills = []
             for skill in player.skills:
-                if skill.duration > 0:
-                    skill.duration -= 1
-                    if skill.duration == 0:
+                if isinstance(skill, dict) and skill.get('duration', 0) > 0:
+                    skill['duration'] -= 1
+                    if skill['duration'] == 0:
                         expired_skills.append(skill)
             
             # 移除过期技能
@@ -460,15 +461,15 @@ class GameLogic:
         # 查找技能卡
         skill = None
         for s in player.skills:
-            if s.id == skill_id:
+            if isinstance(s, dict) and (s.get('id') == skill_id or s.get('skill_type') == skill_id):
                 skill = s
                 break
         
         if not skill:
             return False, "技能卡不存在"
         
-        # 验证目标
-        if skill.target_required:
+        # 验证目标（攻击类技能需要目标）
+        if skill.get('type') == 'attack':
             if not target_id or target_id not in self.room.players:
                 return False, "需要指定有效目标"
             target = self.room.players[target_id]
@@ -476,15 +477,29 @@ class GameLogic:
                 return False, "目标已死亡"
         
         # 执行技能效果
-        result = self.skill_manager.use_skill(skill, player, 
-                                              self.room.players.get(target_id),
-                                              self.room)
+        effect = skill.get('effect', {})
+        damage = effect.get('damage', 0)
         
-        if result['success']:
+        if damage > 0 and target_id:
+            target = self.room.players[target_id]
+            target.cities -= damage
+            
+            # 破城卡：自身损失
+            if effect.get('self_damage'):
+                player.cities -= effect['self_damage']
+            
             # 移除使用的技能卡
             player.skills.remove(skill)
+            return True, f"使用{skill['name']}，造成{damage}伤害"
         
-        return result['success'], result['message']
+        # 其他类型技能
+        heal = effect.get('heal', 0)
+        if heal > 0:
+            player.cities += heal
+            player.skills.remove(skill)
+            return True, f"使用{skill['name']}，恢复{heal}城池"
+        
+        return False, "该技能卡效果未实现"
     
     def _generate_meeting_report(self, actions: List[Action]):
         """生成会议报告"""
@@ -492,7 +507,7 @@ class GameLogic:
             'round': self.room.game_state.current_round,
             'player_status': {},
             'actions': [],
-            'total_skills_drawn': self.skill_manager.drawn_count
+            'total_skills_drawn': self.drawn_count
         }
         
         # 玩家状态
@@ -518,7 +533,7 @@ class GameLogic:
     def _start_auction(self):
         """开始拍卖"""
         # 抽取一张技能卡作为拍卖品
-        auction_card = self.skill_manager.draw_skill_card()
+        auction_card = get_random_skill()
         if not auction_card:
             # 没有技能卡可拍卖
             self._next_round()

@@ -1,6 +1,6 @@
 # 城池战争 (CityWar)
 
-基于浏览器的本地多人策略游戏，后端使用 Python Flask + Socket.IO，前端使用 HTML/CSS/JavaScript。
+本地多人策略游戏，支持桌面客户端和浏览器运行。后端使用 Python Flask + Socket.IO，前端使用 HTML/CSS/JavaScript，桌面端通过 pywebview 嵌入原生窗口。
 
 ## 游戏简介
 
@@ -28,7 +28,7 @@
 
 | 操作 | 说明 |
 |------|------|
-| **修城** | 立即获得 40 城池，但本轮受到的伤害翻倍 |
+| **修城** | 立即获得 40 城池，但本轮受到伤害时伤害翻倍且修城失效 |
 | **结盟** | 邀请一名玩家结盟（需对方同意）。盟期内双方伤害与奖励平分；解盟时双方猜拳，赢家获全部奖励，输家承担全部伤害 |
 
 ### 拍卖会
@@ -93,12 +93,12 @@
 
 前往 [Releases](https://github.com/zz632/city-war/releases) 页面下载对应平台的压缩包：
 
-| 平台 | 文件 |
-|------|------|
-| macOS | `city-war-launcher-macos.zip` |
-| Windows | `city-war-launcher-windows.zip` |
+| 平台 | 服务器 | 客户端 |
+|------|--------|--------|
+| macOS | `city-war-server-macos.zip` | `city-war-client-macos.zip` |
+| Windows | `city-war-server-windows.zip` | `city-war-client-windows.zip` |
 
-解压后双击可执行文件即可运行，无需安装 Python 或任何依赖。
+解压后先启动 `citywar-server`（服务器），再启动 `citywar-client`（客户端）即可游戏。局域网内其他设备可直接用浏览器访问服务器地址。
 
 ### 方式二：从源码运行
 
@@ -107,58 +107,60 @@
 **安装依赖：**
 
 ```bash
-python -m pip install -r requirements.txt
+pip install -r requirements.txt
 ```
 
-**启动游戏：**
+**启动游戏服务器：**
 
 ```bash
-python3 app.py
+python3 server.py
 ```
 
-服务器默认在 `http://localhost:5000` 启动（如端口被占用会自动切换）。
+服务器默认在 `http://localhost:5000` 启动（如端口被占用会自动切换），同时显示局域网访问地址。
 
-**启动器启动：**
+**启动游戏客户端：**
 
-| 平台 | 启动方式 |
-|------|----------|
-| macOS | 双击 `launcher/macos/CityWarLauncher.command` |
-| Linux | `bash launcher/linux/launcher.sh start` |
-| Windows | 双击 `launcher/windows/CityWarLauncher.bat` |
+```bash
+python3 run.py
+```
 
-启动器会自动检查 Python、安装依赖、启动服务器并打开浏览器。
+客户端会打开桌面窗口，选择"本地游戏"后输入服务器地址和端口即可连接。同一台电脑不可多开客户端。
+
+**直接用浏览器访问：**
+
+局域网内的设备（包括手机）可直接在浏览器中输入服务器地址访问游戏，同一设备不可重复加入同一房间。
 
 ## 项目结构
 
 ```
 city-war/
-├── app.py                  # Flask 主应用入口
+├── server.py               # 服务器启动器（独立运行）
+├── run.py                  # 游戏客户端启动器（pywebview 桌面窗口）
+├── app.py                  # Flask 主应用（不可独立运行）
 ├── requirements.txt        # Python 依赖
+├── build_macos.sh          # macOS 打包脚本
+├── citywar.spec            # PyInstaller 打包配置
 ├── game/
 │   ├── models.py           # 数据模型、技能卡定义
-│   ├── manager.py          # 房间管理器（核心游戏引擎）
-│   ├── logic.py            # 旧版游戏逻辑（未使用）
+│   ├── manager.py          # 房间管理器（核心游戏引擎、IP 防多开）
 │   └── skills.py           # 技能卡效果实现
 ├── websocket/
 │   └── events.py           # Socket.IO 事件处理与游戏流程
 ├── static/
 │   ├── css/
 │   │   ├── reset.css       # CSS 重置
-│   │   ├── main.css        # 主样式
-│   │   └── new-game.css    # 备用样式
+│   │   └── main.css        # 主样式
 │   └── js/
 │       └── main.js         # 前端主逻辑
-├── templates/
-│   ├── index.html          # 首页（创建/加入房间）
-│   ├── lobby.html          # 游戏大厅
-│   └── game.html           # 游戏主页面
-└── launcher/
-    ├── macos/              # macOS 启动器
-    ├── linux/              # Linux 启动器
-    └── windows/            # Windows 启动器
+└── templates/
+    ├── index.html          # 首页（创建/加入房间）
+    ├── lobby.html          # 游戏大厅
+    └── game.html           # 游戏主页面
 ```
 
 ## 技术栈
 
 - **后端**：Python 3 + Flask + Flask-SocketIO（threading 模式）
 - **前端**：HTML5 + CSS3 + Vanilla JavaScript + Socket.IO Client
+- **桌面端**：pywebview（原生窗口嵌入）
+- **防多开**：TCP 端口锁（客户端）+ IP 房间限制（服务端）

@@ -6,3 +6,5 @@ __pycache__/
 update.command
 build/
 dist/
+.trae/
+.vscode/

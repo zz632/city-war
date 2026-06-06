@@ -22,19 +22,29 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller
 
-      - name: Build
-        run: pyinstaller citywar.spec --noconfirm --clean
+      - name: Build client
+        run: pyinstaller citywar-client.spec --noconfirm --clean
+
+      - name: Build server
+        run: pyinstaller citywar-server.spec --noconfirm --clean
 
       - name: Package
         run: |
           cd dist
-          zip city-war-launcher-macos.zip citywar
+          zip city-war-client-macos.zip citywar-client
+          zip city-war-server-macos.zip citywar-server
 
-      - name: Upload artifact
+      - name: Upload client artifact
         uses: actions/upload-artifact@v4
         with:
-          name: city-war-launcher-macos
-          path: dist/city-war-launcher-macos.zip
+          name: city-war-client-macos
+          path: dist/city-war-client-macos.zip
+
+      - name: Upload server artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: city-war-server-macos
+          path: dist/city-war-server-macos.zip
 
   build-windows:
     runs-on: windows-latest
@@ -52,19 +62,29 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller
 
-      - name: Build
-        run: pyinstaller citywar.spec --noconfirm --clean
+      - name: Build client
+        run: pyinstaller citywar-client.spec --noconfirm --clean
+
+      - name: Build server
+        run: pyinstaller citywar-server.spec --noconfirm --clean
 
       - name: Package
         run: |
           cd dist
-          Compress-Archive -Path citywar.exe -DestinationPath city-war-launcher-windows.zip
+          Compress-Archive -Path citywar-client.exe -DestinationPath city-war-client-windows.zip
+          Compress-Archive -Path citywar-server.exe -DestinationPath city-war-server-windows.zip
 
-      - name: Upload artifact
+      - name: Upload client artifact
         uses: actions/upload-artifact@v4
         with:
-          name: city-war-launcher-windows
-          path: dist/city-war-launcher-windows.zip
+          name: city-war-client-windows
+          path: dist/city-war-client-windows.zip
+
+      - name: Upload server artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: city-war-server-windows
+          path: dist/city-war-server-windows.zip
 
   release:
     needs: [build-macos, build-windows]
@@ -72,17 +92,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download macOS artifact
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          name: city-war-launcher-macos
           path: ./artifacts
 
-      - name: Download Windows artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: city-war-launcher-windows
-          path: ./artifacts
+      - name: Collect zip files
+        run: find ./artifacts -name '*.zip' -exec mv {} ./artifacts/ \;
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
