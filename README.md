@@ -1,4 +1,15 @@
-# 城池战争 (CityWar)
+---
+title: City War
+emoji: 🏰
+colorFrom: blue
+colorTo: gray
+sdk: docker
+app_file: server.py
+pinned: false
+license: mit
+---
+
+# 城池战争 CityWar
 
 多人策略游戏，支持本地局域网和在线游戏。后端使用 Python Flask + Socket.IO，前端使用 HTML/CSS/JavaScript，桌面端通过 pywebview 嵌入原生窗口。
 
