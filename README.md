@@ -109,6 +109,16 @@ macOS 和 Linux 包含 ARM64/x64 双架构二进制，自动检测当前架构�
 
 客户端启动后选择"在线游戏"即可自动连接在线服务器；也可直接在浏览器中访问在线服务器地址。
 
+### 在线游戏部署（Hugging Face Spaces，免费无需信用卡）
+
+1. 注册 [Hugging Face](https://huggingface.co/) 账号（无需信用卡）
+2. 新建 Space → 选择 **Docker** 类型 → 命名如 `citywar`
+3. 将代码推送到 Space 的 Git 仓库
+4. Space 会自动构建并启动，访问地址为 `https://你的用户名-citywar.hf.space`
+5. 将 `run.py` 中的 `ONLINE_URL` 改为你的 Space 地址
+
+免费额度：2 核 vCPU + 16GB 内存，48 小时无访问会休眠。
+
 ### 本地游戏 vs 在线游戏
 
 | | 本地游戏 | 在线游戏 |
@@ -156,7 +166,9 @@ city-war/
 ├── run.py                  # 游戏客户端启动器（pywebview 桌面窗口）
 ├── app.py                  # Flask 主应用（不可独立运行）
 ├── render.yaml             # Render 云部署配置
-├── requirements.txt        # Python 依赖
+├── Dockerfile              # Hugging Face Spaces 部署配置
+├── requirements.txt        # Python 依赖（含客户端）
+├── requirements-server.txt # 服务端依赖（仅 Flask 等）
 ├── build_macos.sh          # macOS 打包脚本
 ├── citywar-client.spec     # 客户端 PyInstaller 配置
 ├── citywar-server.spec     # 服务器 PyInstaller 配置
@@ -183,6 +195,6 @@ city-war/
 - **后端**：Python 3 + Flask + Flask-SocketIO（threading 模式）
 - **前端**：HTML5 + CSS3 + Vanilla JavaScript + Socket.IO Client
 - **桌面端**：pywebview（原生窗口嵌入）
-- **在线部署**：Render（免费计划）
+- **在线部署**：Hugging Face Spaces（免费，无需信用卡）
 - **防多开**：TCP 端口锁（客户端）+ IP 房间限制（服务端）
 - **用户系统**：在线模式注册/登录，本地模式支持游客
