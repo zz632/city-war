@@ -74,7 +74,7 @@ def start_server(port, block=False):
             port=port,
             debug=False,
             use_reloader=False,
-            log_output=False,
+            log_output=True,
             allow_unsafe_werkzeug=True,
         )
     else:
@@ -103,7 +103,11 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     preferred_port = args.port or int(os.environ.get('PORT', 5000))
-    port = find_available_port(preferred_port)
+    # Render 等云平台要求绑定到指定端口，不允许递增
+    if os.environ.get('PORT'):
+        port = preferred_port
+    else:
+        port = find_available_port(preferred_port)
 
     lan_ips = get_lan_ips()
 

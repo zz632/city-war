@@ -8,7 +8,7 @@ CityWar Game - Flask Main Application
 import os
 import uuid
 import hashlib
-from flask import Flask, render_template, request, jsonify, session
+from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
 app = Flask(__name__)
@@ -56,6 +56,9 @@ def require_login_online():
     if path.startswith('/api/auth/'):
         return
     if path.startswith('/static/'):
+        return
+    # Socket.IO 握手和 polling 请求放行（WebSocket 本身无法带 Authorization）
+    if path.startswith('/socket.io/'):
         return
     # 检查登录状态
     username = _check_login()
