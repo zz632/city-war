@@ -15,7 +15,7 @@ import webview
 from server import wait_for_server
 
 LOCK_PORT = 15432
-ONLINE_URL = 'https://zz632-citywar.hf.space'
+ONLINE_URL = 'https://zz632-city-war.hf.space'
 WINDOW_TITLE = '城池战争 CityWar'
 WINDOW_WIDTH = 1100
 WINDOW_HEIGHT = 750
