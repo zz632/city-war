@@ -15,6 +15,7 @@ import webview
 from server import wait_for_server
 
 LOCK_PORT = 15432
+ONLINE_URL = 'https://citywar.onrender.com'
 WINDOW_TITLE = '城池战争 CityWar'
 WINDOW_WIDTH = 1100
 WINDOW_HEIGHT = 750
@@ -48,7 +49,8 @@ class GameApi:
     def select_online(self):
         w = _get_window()
         if w:
-            w.evaluate_js('showOnlineTip()')
+            w.set_title(WINDOW_TITLE)
+            w.load_url(ONLINE_URL)
 
     def go_back(self):
         w = _get_window()
@@ -324,7 +326,7 @@ body {
     <!-- 页面1：模式选择 -->
     <div id="page-mode" class="page-section active">
         <div class="card">
-            <div id="online-tip" class="online-tip">在线游戏即将开放，敬请期待</div>
+            <div id="online-tip" class="online-tip" style="display:none">正在连接在线服务器...</div>
             <button class="mode-btn" onclick="window.pywebview.api.select_online()">
                 <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z"/></svg>
                 <div class="mode-btn-text">

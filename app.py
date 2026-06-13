@@ -7,7 +7,8 @@ CityWar Game - Flask Main Application
 
 import os
 import uuid
-from flask import Flask, render_template, request, jsonify
+import hashlib
+from flask import Flask, render_template, request, jsonify, session
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
 app = Flask(__name__)
@@ -24,6 +25,104 @@ from websocket.events import init_socket_events
 room_manager = RoomManager()
 
 init_socket_events(socketio, room_manager)
+
+# ===== 在线模式 & 用户系统 =====
+ONLINE_MODE = os.environ.get('ONLINE_MODE', '').lower() in ('1', 'true', 'yes')
+users = {}  # username -> {password_hash, display_name}
+sessions = {}  # session_token -> username
+
+
+def _hash_password(password):
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+
+def _check_login():
+    """检查是否已登录，返回 username 或 None"""
+    token = request.headers.get('Authorization', '').replace('Bearer ', '')
+    if not token:
+        token = request.args.get('token', '')
+    if token and token in sessions:
+        return sessions[token]
+    return None
+
+
+@app.before_request
+def require_login_online():
+    """在线模式下，未登录用户只能访问登录相关页面"""
+    if not ONLINE_MODE:
+        return
+    # 允许的路径（无需登录）
+    path = request.path
+    if path.startswith('/api/auth/'):
+        return
+    if path.startswith('/static/'):
+        return
+    # 检查登录状态
+    username = _check_login()
+    if username:
+        return
+    # 未登录：页面请求返回首页（让前端显示登录），API 请求返回 401
+    if path.startswith('/api/'):
+        return jsonify({'success': False, 'message': '请先登录'}), 401
+    # 页面请求放行，由前端判断显示登录界面
+    return None
+
+
+@app.route('/api/auth/register', methods=['POST'])
+def api_register():
+    data = request.get_json() or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+    display_name = data.get('display_name', '').strip() or username
+
+    if not username or not password:
+        return jsonify({'success': False, 'message': '用户名和密码不能为空'}), 400
+    if len(username) < 2 or len(username) > 12:
+        return jsonify({'success': False, 'message': '用户名需要2-12个字符'}), 400
+    if len(password) < 4:
+        return jsonify({'success': False, 'message': '密码至少4个字符'}), 400
+    if username in users:
+        return jsonify({'success': False, 'message': '用户名已被占用'}), 400
+
+    users[username] = {
+        'password_hash': _hash_password(password),
+        'display_name': display_name,
+    }
+    # 自动登录
+    token = uuid.uuid4().hex
+    sessions[token] = username
+    return jsonify({'success': True, 'token': token, 'username': username, 'display_name': display_name})
+
+
+@app.route('/api/auth/login', methods=['POST'])
+def api_login():
+    data = request.get_json() or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+
+    if not username or not password:
+        return jsonify({'success': False, 'message': '用户名和密码不能为空'}), 400
+
+    user = users.get(username)
+    if not user or user['password_hash'] != _hash_password(password):
+        return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
+
+    token = uuid.uuid4().hex
+    sessions[token] = username
+    return jsonify({'success': True, 'token': token, 'username': username, 'display_name': user['display_name']})
+
+
+@app.route('/api/auth/check', methods=['GET'])
+def api_auth_check():
+    username = _check_login()
+    if username and username in users:
+        return jsonify({'success': True, 'username': username, 'display_name': users[username]['display_name']})
+    return jsonify({'success': False})
+
+
+@app.route('/api/auth/online_mode', methods=['GET'])
+def api_online_mode():
+    return jsonify({'online': ONLINE_MODE})
 
 ERROR_PAGE_STYLE = '''
 <style>

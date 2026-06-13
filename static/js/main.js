@@ -9,6 +9,13 @@ let actionSubmitted = false; // 是否已提交
 let _lastRenderedRound = 0;  // 上次渲染的回合号，用于判断是否需要保持行动状态
 let duelTargetId = null;    // 约战目标
 let amSpectator = false;    // 是否是观战者
+let authToken = localStorage.getItem('auth_token') || '';
+let isOnlineMode = false;
+let loggedInDisplayName = '';
+
+function authHeaders() {
+    return authToken ? { 'Authorization': 'Bearer ' + authToken } : {};
+}
 
 document.addEventListener('DOMContentLoaded', () => {
     const page = document.body.dataset.page;
@@ -29,12 +36,58 @@ function toast(msg, type = 'info') {
 
 // ===== 首页 =====
 function initHome() {
+    // 检测是否在线模式
+    fetch('/api/auth/online_mode').then(r => r.json()).then(data => {
+        isOnlineMode = data.online;
+        if (isOnlineMode) {
+            // 在线模式：隐藏游客按钮
+            document.getElementById('guest-entry').style.display = 'none';
+            checkExistingLogin();
+        } else {
+            // 本地模式：显示游客按钮
+            document.getElementById('guest-entry').style.display = 'block';
+            checkExistingLogin();
+        }
+    }).catch(() => {
+        document.getElementById('guest-entry').style.display = 'block';
+        showAuthSection();
+    });
+
+    // 登录/注册切换
+    document.getElementById('showRegister').addEventListener('click', e => {
+        e.preventDefault();
+        document.getElementById('auth-login').style.display = 'none';
+        document.getElementById('auth-register').style.display = 'block';
+    });
+    document.getElementById('showLogin').addEventListener('click', e => {
+        e.preventDefault();
+        document.getElementById('auth-register').style.display = 'none';
+        document.getElementById('auth-login').style.display = 'block';
+    });
+
+    // 登录
+    document.getElementById('loginBtn').addEventListener('click', doLogin);
+    document.getElementById('loginPassword').addEventListener('keypress', e => { if (e.key === 'Enter') doLogin(); });
+
+    // 注册
+    document.getElementById('registerBtn').addEventListener('click', doRegister);
+    document.getElementById('regPassword').addEventListener('keypress', e => { if (e.key === 'Enter') doRegister(); });
+
+    // 退出登录
+    document.getElementById('logoutBtn').addEventListener('click', doLogout);
+
+    // 游客模式
+    document.getElementById('guestBtn').addEventListener('click', () => {
+        showGameSection();
+    });
+
+    // 游戏进入
     const enterBtn = document.getElementById('enterBtn');
     const playerNameInput = document.getElementById('playerName');
     const roomCodeInput = document.getElementById('roomCode');
 
     enterBtn.addEventListener('click', () => {
-        const name = playerNameInput.value.trim();
+        const name = isOnlineMode ? loggedInDisplayName : playerNameInput.value.trim();
         if (!name) {
             toast('请输入你的名字', 'error');
             playerNameInput.focus();
@@ -52,18 +105,115 @@ function initHome() {
     playerNameInput.addEventListener('keypress', e => { if (e.key === 'Enter') enterBtn.click(); });
 }
 
+function showAuthSection() {
+    document.getElementById('auth-section').style.display = 'block';
+    document.getElementById('game-section').style.display = 'none';
+}
+
+function showGameSection() {
+    document.getElementById('auth-section').style.display = 'none';
+    document.getElementById('game-section').style.display = 'block';
+    if (isOnlineMode || loggedInDisplayName) {
+        // 在线模式或已登录：隐藏名字输入，显示登录信息
+        document.getElementById('local-name-field').style.display = 'none';
+        document.getElementById('logged-in-info').style.display = 'flex';
+        document.getElementById('logged-in-name').textContent = loggedInDisplayName || '游客';
+    } else {
+        // 本地游客模式：显示名字输入
+        document.getElementById('local-name-field').style.display = 'block';
+        document.getElementById('logged-in-info').style.display = 'none';
+    }
+}
+
+async function checkExistingLogin() {
+    if (!authToken) {
+        showAuthSection();
+        return;
+    }
+    try {
+        const res = await fetch('/api/auth/check', { headers: authHeaders() });
+        const data = await res.json();
+        if (data.success) {
+            loggedInDisplayName = data.display_name;
+            showGameSection();
+        } else {
+            authToken = '';
+            localStorage.removeItem('auth_token');
+            showAuthSection();
+        }
+    } catch (e) {
+        showAuthSection();
+    }
+}
+
+async function doLogin() {
+    const username = document.getElementById('loginUsername').value.trim();
+    const password = document.getElementById('loginPassword').value;
+    if (!username || !password) { toast('请输入用户名和密码', 'error'); return; }
+    try {
+        const res = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (data.success) {
+            authToken = data.token;
+            loggedInDisplayName = data.display_name;
+            localStorage.setItem('auth_token', authToken);
+            showGameSection();
+        } else {
+            toast(data.message || '登录失败', 'error');
+        }
+    } catch (e) {
+        toast('网络错误', 'error');
+    }
+}
+
+async function doRegister() {
+    const username = document.getElementById('regUsername').value.trim();
+    const display_name = document.getElementById('regDisplayName').value.trim();
+    const password = document.getElementById('regPassword').value;
+    if (!username || !password) { toast('请填写用户名和密码', 'error'); return; }
+    try {
+        const res = await fetch('/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, display_name, password })
+        });
+        const data = await res.json();
+        if (data.success) {
+            authToken = data.token;
+            loggedInDisplayName = data.display_name;
+            localStorage.setItem('auth_token', authToken);
+            showGameSection();
+        } else {
+            toast(data.message || '注册失败', 'error');
+        }
+    } catch (e) {
+        toast('网络错误', 'error');
+    }
+}
+
+function doLogout() {
+    authToken = '';
+    loggedInDisplayName = '';
+    localStorage.removeItem('auth_token');
+    showAuthSection();
+}
+
 async function createRoom(name) {
     try {
         const res = await fetch('/api/rooms', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify({ player_name: name })
         });
         const data = await res.json();
         if (data.success) {
             myPlayerId = data.player.id;
             myRoomId = data.room.id;
-            window.location.href = '/lobby/' + myRoomId + '?pid=' + myPlayerId;
+            window.location.href = '/lobby/' + myRoomId + '?pid=' + myPlayerId + (authToken ? '&token=' + authToken : '');
         } else {
             toast(data.message || '创建失败', 'error');
         }
@@ -76,18 +226,18 @@ async function joinRoom(name, code) {
     try {
         const res = await fetch('/api/rooms/' + code + '/join', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify({ player_name: name })
         });
         const data = await res.json();
         if (data.success) {
             myPlayerId = data.player.id;
             myRoomId = code;
-            // 游戏已开始则直接进游戏页（观战），否则进大厅
+            const tokenParam = authToken ? '&token=' + authToken : '';
             if (data.is_spectator) {
-                window.location.href = '/game/' + myRoomId + '?pid=' + myPlayerId;
+                window.location.href = '/game/' + myRoomId + '?pid=' + myPlayerId + tokenParam;
             } else {
-                window.location.href = '/lobby/' + myRoomId + '?pid=' + myPlayerId;
+                window.location.href = '/lobby/' + myRoomId + '?pid=' + myPlayerId + tokenParam;
             }
         } else {
             toast(data.message || '加入失败', 'error');

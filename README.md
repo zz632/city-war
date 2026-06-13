@@ -1,10 +1,10 @@
 # 城池战争 (CityWar)
 
-本地多人策略游戏，支持桌面客户端和浏览器运行。后端使用 Python Flask + Socket.IO，前端使用 HTML/CSS/JavaScript，桌面端通过 pywebview 嵌入原生窗口。
+多人策略游戏，支持本地局域网和在线游戏。后端使用 Python Flask + Socket.IO，前端使用 HTML/CSS/JavaScript，桌面端通过 pywebview 嵌入原生窗口。
 
 ## 游戏简介
 
-- **类型**：本地多人策略游戏
+- **类型**：多人策略游戏
 - **人数**：2-8 人
 - **时长**：约 15-30 分钟
 - **胜利条件**：成为最后存活的玩家
@@ -95,10 +95,28 @@
 
 | 平台 | 服务器 | 客户端 |
 |------|--------|--------|
-| macOS | `city-war-server-macos.zip` | `city-war-client-macos.zip` |
-| Windows | `city-war-server-windows.zip` | `city-war-client-windows.zip` |
+| macOS | `city-war-server-macos-universal.zip` | `city-war-client-macos-universal.zip` |
+| Windows | `city-war-server-windows-universal.zip` | `city-war-client-windows-universal.zip` |
+| Linux (Ubuntu) | `city-war-server-linux-ubuntu-universal.tar.gz` | `city-war-client-linux-ubuntu-universal.tar.gz` |
+
+macOS 和 Linux 包含 ARM64/x64 双架构二进制，自动检测当前架构运行。Windows 为 x64，ARM64 设备通过系统兼容层运行。
 
 解压后先启动 `citywar-server`（服务器），再启动 `citywar-client`（客户端）即可游戏。局域网内设备也可直接用浏览器访问服务器地址。
+
+### 在线游戏
+
+访问在线服务器即可与朋友远程对战，无需自建服务器。在线游戏需要注册账号登录。
+
+客户端启动后选择"在线游戏"即可自动连接在线服务器；也可直接在浏览器中访问在线服务器地址。
+
+### 本地游戏 vs 在线游戏
+
+| | 本地游戏 | 在线游戏 |
+|---|---|---|
+| 登录 | 可选（支持游客模式） | 必须注册/登录 |
+| 网络 | 局域网 | 互联网 |
+| 服务器 | 自建（`server.py`） | 云端托管 |
+| 多端 | 手机浏览器可加入 | 任何设备浏览器均可 |
 
 ### 方式二：从源码运行
 
@@ -137,9 +155,11 @@ city-war/
 ├── server.py               # 服务器启动器（独立运行）
 ├── run.py                  # 游戏客户端启动器（pywebview 桌面窗口）
 ├── app.py                  # Flask 主应用（不可独立运行）
+├── render.yaml             # Render 云部署配置
 ├── requirements.txt        # Python 依赖
 ├── build_macos.sh          # macOS 打包脚本
-├── citywar.spec            # PyInstaller 打包配置
+├── citywar-client.spec     # 客户端 PyInstaller 配置
+├── citywar-server.spec     # 服务器 PyInstaller 配置
 ├── game/
 │   ├── models.py           # 数据模型、技能卡定义
 │   ├── manager.py          # 房间管理器（核心游戏引擎、IP 防多开）
@@ -153,7 +173,7 @@ city-war/
 │   └── js/
 │       └── main.js         # 前端主逻辑
 └── templates/
-    ├── index.html          # 首页（创建/加入房间）
+    ├── index.html          # 首页（登录/创建/加入房间）
     ├── lobby.html          # 游戏大厅
     └── game.html           # 游戏主页面
 ```
@@ -163,4 +183,6 @@ city-war/
 - **后端**：Python 3 + Flask + Flask-SocketIO（threading 模式）
 - **前端**：HTML5 + CSS3 + Vanilla JavaScript + Socket.IO Client
 - **桌面端**：pywebview（原生窗口嵌入）
+- **在线部署**：Render（免费计划）
 - **防多开**：TCP 端口锁（客户端）+ IP 房间限制（服务端）
+- **用户系统**：在线模式注册/登录，本地模式支持游客

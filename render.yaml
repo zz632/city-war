@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: city-war
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py --port $PORT
+    plan: free
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: ONLINE_MODE
+        value: "1"
+      - key: SECRET_KEY
+        generateValue: true
