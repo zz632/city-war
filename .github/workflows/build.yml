@@ -6,9 +6,9 @@ on:
       - 'v*'
 
 jobs:
-  build-macos-arm64:
+  build-macos:
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -24,71 +24,57 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller
 
-      - name: Build client
+      # ARM64 原生构建
+      - name: Build ARM64 client
         run: pyinstaller citywar-client.spec --noconfirm --clean
 
-      - name: Build server
+      - name: Build ARM64 server
         run: pyinstaller citywar-server.spec --noconfirm --clean
 
-      - name: Rename and package
+      - name: Save ARM64 binaries
         run: |
           mv dist/citywar-client dist/citywar-client-arm64
           mv dist/citywar-server dist/citywar-server-arm64
+
+      # x64 通过 Rosetta 构建
+      - name: Build x64 client
+        run: arch -x86_64 python -m PyInstaller citywar-client.spec --noconfirm --clean
+
+      - name: Build x64 server
+        run: arch -x86_64 python -m PyInstaller citywar-server.spec --noconfirm --clean
+
+      - name: Save x64 binaries
+        run: |
+          mv dist/citywar-client dist/citywar-client-x64
+          mv dist/citywar-server dist/citywar-server-x64
+
+      - name: Package
+        run: |
           cd dist
           zip city-war-client-macos-arm64.zip citywar-client-arm64
           zip city-war-server-macos-arm64.zip citywar-server-arm64
+          zip city-war-client-macos-x64.zip citywar-client-x64
+          zip city-war-server-macos-x64.zip citywar-server-x64
 
-      - name: Upload client
+      - name: Upload ARM64 client
         uses: actions/upload-artifact@v4
         with:
           name: macos-client-arm64
           path: dist/city-war-client-macos-arm64.zip
 
-      - name: Upload server
+      - name: Upload ARM64 server
         uses: actions/upload-artifact@v4
         with:
           name: macos-server-arm64
           path: dist/city-war-server-macos-arm64.zip
 
-  build-macos-x64:
-    runs-on: macos-13
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install pyinstaller
-
-      - name: Build client
-        run: pyinstaller citywar-client.spec --noconfirm --clean
-
-      - name: Build server
-        run: pyinstaller citywar-server.spec --noconfirm --clean
-
-      - name: Rename and package
-        run: |
-          mv dist/citywar-client dist/citywar-client-x64
-          mv dist/citywar-server dist/citywar-server-x64
-          cd dist
-          zip city-war-client-macos-x64.zip citywar-client-x64
-          zip city-war-server-macos-x64.zip citywar-server-x64
-
-      - name: Upload client
+      - name: Upload x64 client
         uses: actions/upload-artifact@v4
         with:
           name: macos-client-x64
           path: dist/city-war-client-macos-x64.zip
 
-      - name: Upload server
+      - name: Upload x64 server
         uses: actions/upload-artifact@v4
         with:
           name: macos-server-x64
@@ -184,7 +170,7 @@ jobs:
           path: dist/city-war-server-linux-x64.tar.gz
 
   release:
-    needs: [build-macos-arm64, build-macos-x64, build-windows, build-linux-x64]
+    needs: [build-macos, build-windows, build-linux-x64]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
