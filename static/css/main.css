@@ -215,6 +215,19 @@ body {
 }
 .room-row .field-input { flex: 1; }
 
+/* 验证码行 */
+.code-row {
+    display: flex;
+    gap: 8px;
+}
+.code-row .field-input { flex: 1; }
+.code-row .btn {
+    flex-shrink: 0;
+    width: 110px;
+    font-size: 13px;
+    padding: 10px 12px;
+}
+
 .auth-switch {
     text-align: center;
     margin-top: 16px;

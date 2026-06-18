@@ -73,6 +73,9 @@ function initHome() {
     document.getElementById('registerBtn').addEventListener('click', doRegister);
     document.getElementById('regPassword').addEventListener('keypress', e => { if (e.key === 'Enter') doRegister(); });
 
+    // 发送验证码
+    document.getElementById('sendCodeBtn').addEventListener('click', sendVerificationCode);
+
     // 退出登录
     document.getElementById('logoutBtn').addEventListener('click', doLogout);
 
@@ -170,16 +173,64 @@ async function doLogin() {
     }
 }
 
+async function sendVerificationCode() {
+    const email = document.getElementById('regEmail').value.trim();
+    if (!email) { toast('请输入邮箱', 'error'); return; }
+    const btn = document.getElementById('sendCodeBtn');
+    btn.disabled = true;
+    try {
+        const res = await fetch('/api/auth/send_code', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email })
+        });
+        const data = await res.json();
+        if (data.success) {
+            toast(data.message || '验证码已发送', 'success');
+            // 开发模式下显示验证码
+            if (data.dev_code) {
+                alert('开发模式验证码：' + data.dev_code);
+            }
+            // 60秒倒计时
+            let countdown = 60;
+            btn.textContent = countdown + 's';
+            const timer = setInterval(() => {
+                countdown--;
+                if (countdown <= 0) {
+                    clearInterval(timer);
+                    btn.textContent = '发送验证码';
+                    btn.disabled = false;
+                } else {
+                    btn.textContent = countdown + 's';
+                }
+            }, 1000);
+        } else {
+            toast(data.message || '发送失败', 'error');
+            btn.disabled = false;
+        }
+    } catch (e) {
+        toast('网络错误', 'error');
+        btn.disabled = false;
+    }
+}
+
 async function doRegister() {
     const username = document.getElementById('regUsername').value.trim();
     const display_name = document.getElementById('regDisplayName').value.trim();
     const password = document.getElementById('regPassword').value;
+    const email = document.getElementById('regEmail').value.trim();
+    const code = document.getElementById('regCode').value.trim();
     if (!username || !password) { toast('请填写用户名和密码', 'error'); return; }
+    // 在线模式下验证邮箱和验证码不为空
+    if (isOnlineMode && (!email || !code)) { toast('请填写邮箱和验证码', 'error'); return; }
     try {
+        const body = { username, display_name, password };
+        if (email) body.email = email;
+        if (code) body.code = code;
         const res = await fetch('/api/auth/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, display_name, password })
+            body: JSON.stringify(body)
         });
         const data = await res.json();
         if (data.success) {

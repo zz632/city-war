@@ -8,6 +8,7 @@ on:
 jobs:
   build-macos-arm64:
     runs-on: macos-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -15,6 +16,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
@@ -28,138 +30,27 @@ jobs:
       - name: Build server
         run: pyinstaller citywar-server.spec --noconfirm --clean
 
-      - name: Rename binaries
+      - name: Package
         run: |
-          mv dist/citywar-client dist/citywar-client-arm64
-          mv dist/citywar-server dist/citywar-server-arm64
-
-      - name: Upload client
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-client-arm64
-          path: dist/citywar-client-arm64
-
-      - name: Upload server
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-server-arm64
-          path: dist/citywar-server-arm64
-
-  build-macos-x64:
-    runs-on: macos-13
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install pyinstaller
-
-      - name: Build client
-        run: pyinstaller citywar-client.spec --noconfirm --clean
-
-      - name: Build server
-        run: pyinstaller citywar-server.spec --noconfirm --clean
-
-      - name: Rename binaries
-        run: |
-          mv dist/citywar-client dist/citywar-client-x64
-          mv dist/citywar-server dist/citywar-server-x64
-
-      - name: Upload client
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-client-x64
-          path: dist/citywar-client-x64
-
-      - name: Upload server
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-server-x64
-          path: dist/citywar-server-x64
-
-  combine-macos:
-    needs: [build-macos-arm64, build-macos-x64]
-    runs-on: macos-latest
-    steps:
-      - name: Download ARM64 client
-        uses: actions/download-artifact@v4
-        with:
-          name: macos-client-arm64
-          path: ./dist
-
-      - name: Download x64 client
-        uses: actions/download-artifact@v4
-        with:
-          name: macos-client-x64
-          path: ./dist
-
-      - name: Download ARM64 server
-        uses: actions/download-artifact@v4
-        with:
-          name: macos-server-arm64
-          path: ./dist
-
-      - name: Download x64 server
-        uses: actions/download-artifact@v4
-        with:
-          name: macos-server-x64
-          path: ./dist
-
-      - name: Create launcher scripts and package
-        run: |
-          chmod +x dist/citywar-client-arm64 dist/citywar-client-x64 dist/citywar-server-arm64 dist/citywar-server-x64
-
-          # Client launcher
-          cat > dist/citywar-client << 'EOF'
-          #!/bin/bash
-          DIR="$(cd "$(dirname "$0")" && pwd)"
-          ARCH=$(uname -m)
-          if [ "$ARCH" = "arm64" ]; then
-              exec "$DIR/citywar-client-arm64" "$@"
-          else
-              exec "$DIR/citywar-client-x64" "$@"
-          fi
-          EOF
-          chmod +x dist/citywar-client
-
-          # Server launcher
-          cat > dist/citywar-server << 'EOF'
-          #!/bin/bash
-          DIR="$(cd "$(dirname "$0")" && pwd)"
-          ARCH=$(uname -m)
-          if [ "$ARCH" = "arm64" ]; then
-              exec "$DIR/citywar-server-arm64" "$@"
-          else
-              exec "$DIR/citywar-server-x64" "$@"
-          fi
-          EOF
-          chmod +x dist/citywar-server
-
           cd dist
-          zip city-war-client-macos-universal.zip citywar-client citywar-client-arm64 citywar-client-x64
-          zip city-war-server-macos-universal.zip citywar-server citywar-server-arm64 citywar-server-x64
+          zip city-war-client-macos-arm64.zip citywar-client
+          zip city-war-server-macos-arm64.zip citywar-server
 
       - name: Upload client
         uses: actions/upload-artifact@v4
         with:
-          name: city-war-client-macos-universal
-          path: dist/city-war-client-macos-universal.zip
+          name: city-war-client-macos-arm64
+          path: dist/city-war-client-macos-arm64.zip
 
       - name: Upload server
         uses: actions/upload-artifact@v4
         with:
-          name: city-war-server-macos-universal
-          path: dist/city-war-server-macos-universal.zip
+          name: city-war-server-macos-arm64
+          path: dist/city-war-server-macos-arm64.zip
 
   build-windows:
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -167,6 +58,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
@@ -200,6 +92,7 @@ jobs:
 
   build-linux-x64:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -212,6 +105,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
@@ -225,144 +119,28 @@ jobs:
       - name: Build server
         run: pyinstaller citywar-server.spec --noconfirm --clean
 
-      - name: Rename binaries
+      - name: Package
         run: |
-          mv dist/citywar-client dist/citywar-client-x64
-          mv dist/citywar-server dist/citywar-server-x64
-
-      - name: Upload client
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-client-x64
-          path: dist/citywar-client-x64
-
-      - name: Upload server
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-server-x64
-          path: dist/citywar-server-x64
-
-  build-linux-arm64:
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install system dependencies (GTK for pywebview)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-gi python3-gi-cairo gir1.2-webkit2-4.1 libglib2.0-dev libcairo2-dev
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install pyinstaller
-
-      - name: Build client
-        run: pyinstaller citywar-client.spec --noconfirm --clean
-
-      - name: Build server
-        run: pyinstaller citywar-server.spec --noconfirm --clean
-
-      - name: Rename binaries
-        run: |
-          mv dist/citywar-client dist/citywar-client-arm64
-          mv dist/citywar-server dist/citywar-server-arm64
-
-      - name: Upload client
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-client-arm64
-          path: dist/citywar-client-arm64
-
-      - name: Upload server
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-server-arm64
-          path: dist/citywar-server-arm64
-
-  combine-linux:
-    needs: [build-linux-x64, build-linux-arm64]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download x64 client
-        uses: actions/download-artifact@v4
-        with:
-          name: linux-client-x64
-          path: ./dist
-
-      - name: Download ARM64 client
-        uses: actions/download-artifact@v4
-        with:
-          name: linux-client-arm64
-          path: ./dist
-
-      - name: Download x64 server
-        uses: actions/download-artifact@v4
-        with:
-          name: linux-server-x64
-          path: ./dist
-
-      - name: Download ARM64 server
-        uses: actions/download-artifact@v4
-        with:
-          name: linux-server-arm64
-          path: ./dist
-
-      - name: Create launcher scripts and package
-        run: |
-          chmod +x dist/citywar-client-arm64 dist/citywar-client-x64 dist/citywar-server-arm64 dist/citywar-server-x64
-
-          # Client launcher
-          cat > dist/citywar-client << 'EOF'
-          #!/bin/bash
-          DIR="$(cd "$(dirname "$0")" && pwd)"
-          ARCH=$(uname -m)
-          if [ "$ARCH" = "aarch64" ]; then
-              exec "$DIR/citywar-client-arm64" "$@"
-          else
-              exec "$DIR/citywar-client-x64" "$@"
-          fi
-          EOF
-          chmod +x dist/citywar-client
-
-          # Server launcher
-          cat > dist/citywar-server << 'EOF'
-          #!/bin/bash
-          DIR="$(cd "$(dirname "$0")" && pwd)"
-          ARCH=$(uname -m)
-          if [ "$ARCH" = "aarch64" ]; then
-              exec "$DIR/citywar-server-arm64" "$@"
-          else
-              exec "$DIR/citywar-server-x64" "$@"
-          fi
-          EOF
-          chmod +x dist/citywar-server
-
           cd dist
-          tar czf city-war-client-linux-ubuntu-universal.tar.gz citywar-client citywar-client-arm64 citywar-client-x64
-          tar czf city-war-server-linux-ubuntu-universal.tar.gz citywar-server citywar-server-arm64 citywar-server-x64
+          tar czf city-war-client-linux-x64.tar.gz citywar-client
+          tar czf city-war-server-linux-x64.tar.gz citywar-server
 
       - name: Upload client
         uses: actions/upload-artifact@v4
         with:
-          name: city-war-client-linux-ubuntu-universal
-          path: dist/city-war-client-linux-ubuntu-universal.tar.gz
+          name: city-war-client-linux-x64
+          path: dist/city-war-client-linux-x64.tar.gz
 
       - name: Upload server
         uses: actions/upload-artifact@v4
         with:
-          name: city-war-server-linux-ubuntu-universal
-          path: dist/city-war-server-linux-ubuntu-universal.tar.gz
+          name: city-war-server-linux-x64
+          path: dist/city-war-server-linux-x64.tar.gz
 
   release:
-    needs: [combine-macos, build-windows, combine-linux]
+    needs: [build-macos-arm64, build-windows, build-linux-x64]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
