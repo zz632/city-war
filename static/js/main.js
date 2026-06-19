@@ -180,6 +180,15 @@ async function doLogin() {
     }
 }
 
+function removeTurnstileWidget() {
+    try {
+        if (window.turnstile && turnstileWidgetId !== null) {
+            turnstile.remove(turnstileWidgetId);
+        }
+    } catch (e) { /* ignore */ }
+    turnstileWidgetId = null;
+}
+
 function showTurnstileModal() {
     const modal = document.getElementById('turnstileModal');
     const container = document.getElementById('turnstileContainer');
@@ -193,32 +202,25 @@ function showTurnstileModal() {
             theme: 'dark',
             size: 'normal',
             callback: function(token) {
-                // 人机验证通过，自动发送验证码
-                doSendCode(token);
-                closeTurnstileModal();
+                // 人机验证通过，关闭模态框并发送验证码
+                modal.style.display = 'none';
+                doSendCode(token).finally(() => {
+                    removeTurnstileWidget();
+                });
             },
             'error-callback': function() {
                 toast('人机验证出错，请重试', 'error');
-                closeTurnstileModal();
+                modal.style.display = 'none';
+                removeTurnstileWidget();
             },
             'expired-callback': function() {
                 toast('验证已过期，请重试', 'error');
             }
         });
     } else {
-        // 未配置 Turnstile，直接发送
+        // 未配置 Turnstile 或 JS 未加载，直接发送
+        modal.style.display = 'none';
         doSendCode('');
-        closeTurnstileModal();
-    }
-}
-
-function closeTurnstileModal() {
-    const modal = document.getElementById('turnstileModal');
-    if (modal) modal.style.display = 'none';
-    // 重置 Turnstile widget
-    if (window.turnstile && turnstileWidgetId !== null) {
-        turnstile.remove(turnstileWidgetId);
-        turnstileWidgetId = null;
     }
 }
 
@@ -241,11 +243,12 @@ async function doSendCode(turnstileToken) {
 
     const btn = document.getElementById('sendCodeBtn');
     btn.disabled = true;
+    btn.textContent = '发送中...';
     try {
         const res = await fetch('/api/auth/send_code', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, turnstile_token: turnstileToken })
+            body: JSON.stringify({ email, turnstile_token: turnstileToken || '' })
         });
         const data = await res.json();
         if (data.success) {
@@ -271,10 +274,12 @@ async function doSendCode(turnstileToken) {
         } else {
             toast(data.message || '发送失败', 'error');
             btn.disabled = false;
+            btn.textContent = '发送验证码';
         }
     } catch (e) {
-        toast('网络错误', 'error');
+        toast('网络错误：' + e.message, 'error');
         btn.disabled = false;
+        btn.textContent = '发送验证码';
     }
 }
 
