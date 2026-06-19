@@ -245,11 +245,15 @@ async function doSendCode(turnstileToken) {
     btn.disabled = true;
     btn.textContent = '发送中...';
     try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
         const res = await fetch('/api/auth/send_code', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, turnstile_token: turnstileToken || '' })
+            body: JSON.stringify({ email, turnstile_token: turnstileToken || '' }),
+            signal: controller.signal
         });
+        clearTimeout(timeout);
         const data = await res.json();
         if (data.success) {
             toast(data.message || '验证码已发送', 'success');
@@ -277,7 +281,11 @@ async function doSendCode(turnstileToken) {
             btn.textContent = '发送验证码';
         }
     } catch (e) {
-        toast('网络错误：' + e.message, 'error');
+        if (e.name === 'AbortError') {
+            toast('请求超时，请重试', 'error');
+        } else {
+            toast('网络错误：' + e.message, 'error');
+        }
         btn.disabled = false;
         btn.textContent = '发送验证码';
     }
