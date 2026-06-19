@@ -283,7 +283,7 @@ document.getElementById('adminLoginBtn').addEventListener('click', async () => {
         });
         const data = await res.json();
         if (data.success) {
-            window.location.href = '/admin/';
+            window.location.href = '/admin.html';
         } else {
             errorEl.textContent = data.message || '登录失败';
         }
@@ -457,7 +457,7 @@ async function deleteRoom(roomId) {
 // 退出登录
 function doAdminLogout() {
     document.cookie = 'admin_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-    window.location.href = '/admin/login';
+    window.location.href = '/admin.html';
 }
 
 // HTML转义

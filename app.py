@@ -14,6 +14,8 @@ import random
 import time
 import json
 import functools
+import urllib.request
+import urllib.parse
 from flask import Flask, render_template, request, jsonify, make_response, redirect, url_for
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
@@ -74,6 +76,31 @@ ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'zz632')
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'Qiqi130102')
 admin_sessions = {}  # admin_token -> True
 
+# ===== Cloudflare Turnstile 配置 =====
+TURNSTILE_SITE_KEY = os.environ.get('TURNSTILE_SITE_KEY', '')
+TURNSTILE_SECRET_KEY = os.environ.get('TURNSTILE_SECRET_KEY', '')
+
+
+def verify_turnstile(token, remote_ip):
+    """验证 Cloudflare Turnstile token"""
+    if not TURNSTILE_SECRET_KEY:
+        return True  # 未配置时跳过验证
+    if not token:
+        return False
+    try:
+        url = 'https://challenges.cloudflare.com/turnstile/v0/siteverify'
+        data = urllib.parse.urlencode({
+            'secret': TURNSTILE_SECRET_KEY,
+            'response': token,
+            'remoteip': remote_ip
+        }).encode()
+        req = urllib.request.Request(url, data=data)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+            return result.get('success', False)
+    except Exception:
+        return False
+
 
 def _hash_password(password):
     return hashlib.sha256(password.encode('utf-8')).hexdigest()
@@ -95,7 +122,7 @@ def admin_required(f):
     def decorated(*args, **kwargs):
         admin_token = request.cookies.get('admin_token', '')
         if not admin_token or admin_token not in admin_sessions:
-            return redirect('/admin/login')
+            return redirect('/admin.html')
         return f(*args, **kwargs)
     return decorated
 
@@ -109,7 +136,7 @@ def require_login_online():
     path = request.path
     if path.startswith('/api/auth/'):
         return
-    if path.startswith('/admin/'):
+    if path.startswith('/admin/') or path == '/admin.html':
         return
     if path.startswith('/static/'):
         return
@@ -132,9 +159,17 @@ def api_send_code():
     """发送邮箱验证码"""
     data = request.get_json() or {}
     email = data.get('email', '').strip()
+    turnstile_token = data.get('turnstile_token', '')
 
     if not email:
         return jsonify({'success': False, 'message': '邮箱不能为空'}), 400
+
+    # Cloudflare Turnstile 人机验证
+    if TURNSTILE_SECRET_KEY:
+        if not turnstile_token:
+            return jsonify({'success': False, 'message': '请完成人机验证'}), 403
+        if not verify_turnstile(turnstile_token, request.remote_addr):
+            return jsonify({'success': False, 'message': '人机验证失败，请重试'}), 403
 
     # 60秒防刷
     now = time.time()
@@ -161,7 +196,7 @@ def api_send_code():
 
     if not smtp_server or not smtp_user or not smtp_password:
         # SMTP未配置，开发模式：验证码直接在响应中返回
-        return jsonify({'success': True, 'message': '验证码已发送（开发模式）', 'dev_code': code})
+        return jsonify({'success': True, 'message': '验证码已发送（开发模式：验证码已自动填入）', 'dev_code': code})
 
     # 发送邮件
     try:
@@ -276,6 +311,12 @@ def api_auth_check():
 @app.route('/api/auth/online_mode', methods=['GET'])
 def api_online_mode():
     return jsonify({'online': ONLINE_MODE})
+
+
+@app.route('/api/auth/turnstile_key', methods=['GET'])
+def api_turnstile_key():
+    """返回 Cloudflare Turnstile Site Key（前端渲染 widget 需要）"""
+    return jsonify({'site_key': TURNSTILE_SITE_KEY})
 
 ERROR_PAGE_STYLE = '''
 <style>
@@ -413,13 +454,12 @@ def get_room_status(room_id):
 
 # ===== 后台管理系统 =====
 
-@app.route('/admin/login', methods=['GET'])
-def admin_login_page():
-    """管理员登录页"""
-    # 如果已登录则跳转
+@app.route('/admin.html', methods=['GET'])
+def admin_page():
+    """管理员页面（登录+管理面板）"""
     admin_token = request.cookies.get('admin_token', '')
     if admin_token and admin_token in admin_sessions:
-        return redirect('/admin/')
+        return render_template('admin.html', page='panel')
     return render_template('admin.html', page='login')
 
 
@@ -440,10 +480,9 @@ def admin_login_submit():
 
 
 @app.route('/admin/')
-@admin_required
-def admin_panel():
-    """管理面板"""
-    return render_template('admin.html', page='panel')
+def admin_panel_redirect():
+    """兼容旧链接，重定向到 /admin.html"""
+    return redirect('/admin.html')
 
 
 @app.route('/admin/api/users', methods=['GET'])

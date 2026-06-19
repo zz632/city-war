@@ -12,6 +12,8 @@ let amSpectator = false;    // 是否是观战者
 let authToken = localStorage.getItem('auth_token') || '';
 let isOnlineMode = false;
 let loggedInDisplayName = '';
+let turnstileSiteKey = '';
+let turnstileWidgetId = null;
 
 function authHeaders() {
     return authToken ? { 'Authorization': 'Bearer ' + authToken } : {};
@@ -36,6 +38,11 @@ function toast(msg, type = 'info') {
 
 // ===== 首页 =====
 function initHome() {
+    // 加载 Turnstile Site Key
+    fetch('/api/auth/turnstile_key').then(r => r.json()).then(data => {
+        turnstileSiteKey = data.site_key || '';
+    }).catch(() => {});
+
     // 检测是否在线模式
     fetch('/api/auth/online_mode').then(r => r.json()).then(data => {
         isOnlineMode = data.online;
@@ -173,23 +180,80 @@ async function doLogin() {
     }
 }
 
+function showTurnstileModal() {
+    const modal = document.getElementById('turnstileModal');
+    const container = document.getElementById('turnstileContainer');
+    if (!modal || !container) return;
+    container.innerHTML = '';
+    modal.style.display = 'flex';
+
+    if (turnstileSiteKey && window.turnstile) {
+        turnstileWidgetId = turnstile.render(container, {
+            sitekey: turnstileSiteKey,
+            theme: 'dark',
+            size: 'normal',
+            callback: function(token) {
+                // 人机验证通过，自动发送验证码
+                doSendCode(token);
+                closeTurnstileModal();
+            },
+            'error-callback': function() {
+                toast('人机验证出错，请重试', 'error');
+                closeTurnstileModal();
+            },
+            'expired-callback': function() {
+                toast('验证已过期，请重试', 'error');
+            }
+        });
+    } else {
+        // 未配置 Turnstile，直接发送
+        doSendCode('');
+        closeTurnstileModal();
+    }
+}
+
+function closeTurnstileModal() {
+    const modal = document.getElementById('turnstileModal');
+    if (modal) modal.style.display = 'none';
+    // 重置 Turnstile widget
+    if (window.turnstile && turnstileWidgetId !== null) {
+        turnstile.remove(turnstileWidgetId);
+        turnstileWidgetId = null;
+    }
+}
+
 async function sendVerificationCode() {
     const email = document.getElementById('regEmail').value.trim();
     if (!email) { toast('请输入邮箱', 'error'); return; }
+
+    // 如果配置了 Turnstile，先弹出人机验证
+    if (turnstileSiteKey) {
+        showTurnstileModal();
+        return;
+    }
+    // 未配置 Turnstile，直接发送
+    doSendCode('');
+}
+
+async function doSendCode(turnstileToken) {
+    const email = document.getElementById('regEmail').value.trim();
+    if (!email) return;
+
     const btn = document.getElementById('sendCodeBtn');
     btn.disabled = true;
     try {
         const res = await fetch('/api/auth/send_code', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email })
+            body: JSON.stringify({ email, turnstile_token: turnstileToken })
         });
         const data = await res.json();
         if (data.success) {
             toast(data.message || '验证码已发送', 'success');
-            // 开发模式下显示验证码
+            // 开发模式下自动填入验证码
             if (data.dev_code) {
-                alert('开发模式验证码：' + data.dev_code);
+                document.getElementById('regCode').value = data.dev_code;
+                toast('开发模式：验证码已自动填入', 'info');
             }
             // 60秒倒计时
             let countdown = 60;
