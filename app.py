@@ -95,11 +95,12 @@ def verify_turnstile(token, remote_ip):
             'remoteip': remote_ip
         }).encode()
         req = urllib.request.Request(url, data=data)
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:
             result = json.loads(resp.read())
             return result.get('success', False)
     except Exception:
-        return False
+        # 网络异常时放行，避免阻断用户
+        return True
 
 
 def _hash_password(password):
