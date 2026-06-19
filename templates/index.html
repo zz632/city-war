@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>城池战争</title>
     <link rel="stylesheet" href="/static/css/main.css">
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body data-page="home">
     <div class="page-wrap">
@@ -139,6 +140,15 @@
                 <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
                 15-30分钟
             </span>
+        </div>
+    </div>
+
+    <!-- 人机验证模态框 -->
+    <div id="turnstileModal" class="modal-overlay" style="display:none">
+        <div class="modal-card">
+            <div class="modal-title">人机验证</div>
+            <div id="turnstileContainer" class="turnstile-container"></div>
+            <div class="modal-hint">完成验证后将自动发送验证码</div>
         </div>
     </div>
 
