@@ -255,12 +255,14 @@ async function doSendCode(turnstileToken) {
         });
         clearTimeout(timeout);
         const data = await res.json();
+        console.log('[send_code] response:', data);
         if (data.success) {
-            toast(data.message || '验证码已发送', 'success');
-            // 开发模式下自动填入验证码
             if (data.dev_code) {
+                // 开发模式：验证码自动填入，弹窗提示
                 document.getElementById('regCode').value = data.dev_code;
-                toast('开发模式：验证码已自动填入', 'info');
+                alert('开发模式：验证码 ' + data.dev_code + ' 已自动填入\n（SMTP未配置，无法发送邮件）');
+            } else {
+                toast('验证码已发送到 ' + email, 'success');
             }
             // 60秒倒计时
             let countdown = 60;
@@ -281,6 +283,7 @@ async function doSendCode(turnstileToken) {
             btn.textContent = '发送验证码';
         }
     } catch (e) {
+        console.log('[send_code] error:', e);
         if (e.name === 'AbortError') {
             toast('请求超时，请重试', 'error');
         } else {
