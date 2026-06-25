@@ -65,6 +65,7 @@ function initHome() {
         e.preventDefault();
         document.getElementById('auth-login').style.display = 'none';
         document.getElementById('auth-register').style.display = 'block';
+        renderTurnstile();
     });
     document.getElementById('showLogin').addEventListener('click', e => {
         e.preventDefault();
@@ -79,9 +80,6 @@ function initHome() {
     // 注册
     document.getElementById('registerBtn').addEventListener('click', doRegister);
     document.getElementById('regPassword').addEventListener('keypress', e => { if (e.key === 'Enter') doRegister(); });
-
-    // 发送验证码
-    document.getElementById('sendCodeBtn').addEventListener('click', sendVerificationCode);
 
     // 退出登录
     document.getElementById('logoutBtn').addEventListener('click', doLogout);
@@ -180,117 +178,16 @@ async function doLogin() {
     }
 }
 
-function removeTurnstileWidget() {
-    try {
-        if (window.turnstile && turnstileWidgetId !== null) {
-            turnstile.remove(turnstileWidgetId);
-        }
-    } catch (e) { /* ignore */ }
-    turnstileWidgetId = null;
-}
-
-function showTurnstileModal() {
-    const modal = document.getElementById('turnstileModal');
+function renderTurnstile() {
     const container = document.getElementById('turnstileContainer');
-    if (!modal || !container) return;
+    if (!container || !turnstileSiteKey) return;
     container.innerHTML = '';
-    modal.style.display = 'flex';
-
-    if (turnstileSiteKey && window.turnstile) {
+    if (window.turnstile) {
         turnstileWidgetId = turnstile.render(container, {
             sitekey: turnstileSiteKey,
             theme: 'dark',
-            size: 'normal',
-            callback: function(token) {
-                // 人机验证通过，关闭模态框并发送验证码
-                modal.style.display = 'none';
-                doSendCode(token).finally(() => {
-                    removeTurnstileWidget();
-                });
-            },
-            'error-callback': function() {
-                toast('人机验证出错，请重试', 'error');
-                modal.style.display = 'none';
-                removeTurnstileWidget();
-            },
-            'expired-callback': function() {
-                toast('验证已过期，请重试', 'error');
-            }
+            size: 'normal'
         });
-    } else {
-        // 未配置 Turnstile 或 JS 未加载，直接发送
-        modal.style.display = 'none';
-        doSendCode('');
-    }
-}
-
-async function sendVerificationCode() {
-    const email = document.getElementById('regEmail').value.trim();
-    if (!email) { toast('请输入邮箱', 'error'); return; }
-
-    // 如果配置了 Turnstile，先弹出人机验证
-    if (turnstileSiteKey) {
-        showTurnstileModal();
-        return;
-    }
-    // 未配置 Turnstile，直接发送
-    doSendCode('');
-}
-
-async function doSendCode(turnstileToken) {
-    const email = document.getElementById('regEmail').value.trim();
-    if (!email) return;
-
-    const btn = document.getElementById('sendCodeBtn');
-    btn.disabled = true;
-    btn.textContent = '发送中...';
-    try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15000);
-        const res = await fetch('/api/auth/send_code', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, turnstile_token: turnstileToken || '' }),
-            signal: controller.signal
-        });
-        clearTimeout(timeout);
-        const data = await res.json();
-        console.log('[send_code] response:', data);
-        if (data.success) {
-            if (data.dev_code) {
-                // 开发模式：验证码自动填入，弹窗提示
-                document.getElementById('regCode').value = data.dev_code;
-                alert('开发模式：验证码 ' + data.dev_code + ' 已自动填入\n（SMTP未配置，无法发送邮件）');
-            } else {
-                toast('验证码已发送到 ' + email, 'success');
-            }
-            // 60秒倒计时
-            let countdown = 60;
-            btn.textContent = countdown + 's';
-            const timer = setInterval(() => {
-                countdown--;
-                if (countdown <= 0) {
-                    clearInterval(timer);
-                    btn.textContent = '发送验证码';
-                    btn.disabled = false;
-                } else {
-                    btn.textContent = countdown + 's';
-                }
-            }, 1000);
-        } else {
-            toast(data.message || '发送失败', 'error');
-            btn.disabled = false;
-            btn.textContent = '发送验证码';
-        }
-    } catch (e) {
-        console.log('[send_code] error:', e);
-        if (e.name === 'AbortError') {
-            toast('请求超时，请重试', 'error');
-        } else {
-            toast('网络错误：' + e.message, 'error');
-        }
-        btn.disabled = false;
-        btn.textContent = '发送验证码';
     }
 }
 
@@ -298,15 +195,20 @@ async function doRegister() {
     const username = document.getElementById('regUsername').value.trim();
     const display_name = document.getElementById('regDisplayName').value.trim();
     const password = document.getElementById('regPassword').value;
-    const email = document.getElementById('regEmail').value.trim();
-    const code = document.getElementById('regCode').value.trim();
     if (!username || !password) { toast('请填写用户名和密码', 'error'); return; }
-    // 在线模式下验证邮箱和验证码不为空
-    if (isOnlineMode && (!email || !code)) { toast('请填写邮箱和验证码', 'error'); return; }
+
+    // 获取 Turnstile token
+    let turnstileToken = '';
+    if (turnstileSiteKey && window.turnstile && turnstileWidgetId !== null) {
+        turnstileToken = turnstile.getResponse(turnstileWidgetId) || '';
+        if (!turnstileToken) {
+            toast('请先完成人机验证', 'error');
+            return;
+        }
+    }
+
     try {
-        const body = { username, display_name, password };
-        if (email) body.email = email;
-        if (code) body.code = code;
+        const body = { username, display_name, password, turnstile_token: turnstileToken };
         const res = await fetch('/api/auth/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -320,6 +222,10 @@ async function doRegister() {
             showGameSection();
         } else {
             toast(data.message || '注册失败', 'error');
+            // 重置 Turnstile 以便重试
+            if (window.turnstile && turnstileWidgetId !== null) {
+                try { turnstile.reset(turnstileWidgetId); } catch (e) {}
+            }
         }
     } catch (e) {
         toast('网络错误', 'error');
