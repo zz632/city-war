@@ -46,23 +46,6 @@
             <div id="auth-register" style="display:none">
                 <div class="field">
                     <label class="field-label">
-                        <svg viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
-                        <span>邮箱</span>
-                    </label>
-                    <input type="email" id="regEmail" class="field-input" placeholder="输入邮箱" autocomplete="off">
-                </div>
-                <div class="field">
-                    <label class="field-label">
-                        <svg viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z"/></svg>
-                        <span>验证码</span>
-                    </label>
-                    <div class="code-row">
-                        <input type="text" id="regCode" class="field-input" placeholder="输入验证码" maxlength="6" autocomplete="off">
-                        <button id="sendCodeBtn" class="btn btn-secondary">发送验证码</button>
-                    </div>
-                </div>
-                <div class="field">
-                    <label class="field-label">
                         <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                         <span>用户名</span>
                     </label>
@@ -82,6 +65,7 @@
                     </label>
                     <input type="password" id="regPassword" class="field-input" placeholder="至少4个字符" autocomplete="off">
                 </div>
+                <div id="turnstileContainer" class="turnstile-container"></div>
                 <button id="registerBtn" class="btn btn-primary btn-block btn-lg">
                     <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg>
                     <span>注册</span>
@@ -140,15 +124,6 @@
                 <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
                 15-30分钟
             </span>
-        </div>
-    </div>
-
-    <!-- 人机验证模态框 -->
-    <div id="turnstileModal" class="modal-overlay" style="display:none">
-        <div class="modal-card">
-            <div class="modal-title">人机验证</div>
-            <div id="turnstileContainer" class="turnstile-container"></div>
-            <div class="modal-hint">完成验证后将自动发送验证码</div>
         </div>
     </div>
 

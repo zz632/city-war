@@ -2,6 +2,14 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# 安装 nginx
+RUN apt-get update && apt-get install -y --no-install-recommends nginx && \
+    rm -rf /var/lib/apt/lists/*
+
+# 复制 nginx 配置
+COPY nginx.conf /etc/nginx/conf.d/citywar.conf
+RUN rm -f /etc/nginx/sites-enabled/default
+
 # 安装依赖
 COPY requirements-server.txt .
 RUN pip install --no-cache-dir -r requirements-server.txt
@@ -13,6 +21,11 @@ COPY game/ game/
 COPY websocket/ websocket/
 COPY static/ static/
 COPY templates/ templates/
+COPY start.sh .
+RUN chmod +x start.sh
+
+# 创建数据目录
+RUN mkdir -p /app/data
 
 # Hugging Face Spaces 环境变量
 ENV ONLINE_MODE=1
@@ -20,4 +33,4 @@ ENV PORT=7860
 
 EXPOSE 7860
 
-CMD ["python", "server.py"]
+CMD ["./start.sh"]

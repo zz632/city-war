@@ -8,9 +8,6 @@ CityWar Game - Flask Main Application
 import os
 import uuid
 import hashlib
-import smtplib
-import ssl
-import random
 import time
 import json
 import functools
@@ -24,7 +21,9 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'citywar-secret-key-2024
 app.config['DEBUG'] = False
 app.config['PREFERRED_URL_SCHEME'] = 'http'
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60, ping_interval=25)
+# 本地模式用 threading（兼容 pywebview），服务器部署用 eventlet（生产级）
+_async_mode = 'eventlet' if os.environ.get('ONLINE_MODE', '').lower() in ('1', 'true', 'yes') else 'threading'
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode=_async_mode, ping_timeout=60, ping_interval=25)
 
 from game.manager import RoomManager
 from game.models import Player, Room, GameState
@@ -36,11 +35,8 @@ init_socket_events(socketio, room_manager)
 
 # ===== 在线模式 & 用户系统 =====
 ONLINE_MODE = os.environ.get('ONLINE_MODE', '').lower() in ('1', 'true', 'yes')
-users = {}  # username -> {password_hash, display_name, email}
+users = {}  # username -> {password_hash, display_name}
 sessions = {}  # session_token -> username
-
-# ===== 验证码存储 =====
-verification_codes = {}  # email -> {code, expires, last_sent}
 
 # ===== 用户数据持久化 =====
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
@@ -155,92 +151,13 @@ def require_login_online():
     return None
 
 
-@app.route('/api/auth/send_code', methods=['POST'])
-def api_send_code():
-    """发送邮箱验证码"""
-    data = request.get_json() or {}
-    email = data.get('email', '').strip()
-    turnstile_token = data.get('turnstile_token', '')
-
-    if not email:
-        return jsonify({'success': False, 'message': '邮箱不能为空'}), 400
-
-    # Cloudflare Turnstile 人机验证
-    if TURNSTILE_SECRET_KEY:
-        if not turnstile_token:
-            return jsonify({'success': False, 'message': '请完成人机验证'}), 403
-        if not verify_turnstile(turnstile_token, request.remote_addr):
-            return jsonify({'success': False, 'message': '人机验证失败，请重试'}), 403
-
-    # 60秒防刷
-    now = time.time()
-    if email in verification_codes:
-        last_sent = verification_codes[email].get('last_sent', 0)
-        if now - last_sent < 60:
-            remaining = int(60 - (now - last_sent))
-            return jsonify({'success': False, 'message': f'请{remaining}秒后再试'}), 429
-
-    # 生成6位随机验证码
-    code = str(random.randint(100000, 999999))
-    verification_codes[email] = {
-        'code': code,
-        'expires': now + 300,  # 5分钟有效期
-        'last_sent': now
-    }
-
-    # SMTP配置
-    smtp_server = os.environ.get('SMTP_SERVER', '')
-    smtp_port = int(os.environ.get('SMTP_PORT', '465'))
-    smtp_user = os.environ.get('SMTP_USER', '')
-    smtp_password = os.environ.get('SMTP_PASSWORD', '')
-    smtp_from = os.environ.get('SMTP_FROM', smtp_user)
-
-    if not smtp_server or not smtp_user or not smtp_password:
-        # SMTP未配置，开发模式：验证码直接在响应中返回
-        return jsonify({'success': True, 'message': '验证码已发送（开发模式：验证码已自动填入）', 'dev_code': code})
-
-    # 发送邮件
-    try:
-        msg = f"Subject: 城池战争 - 邮箱验证码\n\n您的验证码是：{code}\n\n验证码5分钟内有效，请勿泄露给他人。"
-        if smtp_port == 465:
-            # SSL连接
-            context = ssl.create_default_context()
-            with smtplib.SMTP_SSL(smtp_server, smtp_port, context=context) as server:
-                server.login(smtp_user, smtp_password)
-                server.sendmail(smtp_from, email, msg.encode('utf-8'))
-        else:
-            # STARTTLS连接
-            with smtplib.SMTP(smtp_server, smtp_port) as server:
-                server.starttls(context=ssl.create_default_context())
-                server.login(smtp_user, smtp_password)
-                server.sendmail(smtp_from, email, msg.encode('utf-8'))
-        return jsonify({'success': True, 'message': '验证码已发送到您的邮箱'})
-    except Exception as e:
-        return jsonify({'success': False, 'message': f'邮件发送失败：{str(e)}'}), 500
-
-
-@app.route('/api/auth/check_email', methods=['POST'])
-def api_check_email():
-    """检查邮箱是否已注册"""
-    data = request.get_json() or {}
-    email = data.get('email', '').strip()
-    if not email:
-        return jsonify({'success': False, 'message': '邮箱不能为空'}), 400
-    # 遍历用户检查邮箱是否已注册
-    for u in users.values():
-        if u.get('email') == email:
-            return jsonify({'success': True, 'registered': True})
-    return jsonify({'success': True, 'registered': False})
-
-
 @app.route('/api/auth/register', methods=['POST'])
 def api_register():
     data = request.get_json() or {}
     username = data.get('username', '').strip()
     password = data.get('password', '')
     display_name = data.get('display_name', '').strip() or username
-    email = data.get('email', '').strip()
-    code = data.get('code', '').strip()
+    turnstile_token = data.get('turnstile_token', '')
 
     if not username or not password:
         return jsonify({'success': False, 'message': '用户名和密码不能为空'}), 400
@@ -251,30 +168,16 @@ def api_register():
     if username in users:
         return jsonify({'success': False, 'message': '用户名已被占用'}), 400
 
-    # 在线模式下必须验证邮箱验证码
-    if ONLINE_MODE:
-        if not email or not code:
-            return jsonify({'success': False, 'message': '邮箱和验证码不能为空'}), 400
-        # 检查邮箱是否已被注册
-        for u in users.values():
-            if u.get('email') == email:
-                return jsonify({'success': False, 'message': '该邮箱已被注册'}), 400
-        # 验证验证码
-        if email not in verification_codes:
-            return jsonify({'success': False, 'message': '请先发送验证码'}), 400
-        stored = verification_codes[email]
-        if time.time() > stored['expires']:
-            del verification_codes[email]
-            return jsonify({'success': False, 'message': '验证码已过期，请重新发送'}), 400
-        if stored['code'] != code:
-            return jsonify({'success': False, 'message': '验证码错误'}), 400
-        # 验证码正确后删除
-        del verification_codes[email]
+    # Cloudflare Turnstile 人机验证
+    if TURNSTILE_SECRET_KEY:
+        if not turnstile_token:
+            return jsonify({'success': False, 'message': '请完成人机验证'}), 403
+        if not verify_turnstile(turnstile_token, request.remote_addr):
+            return jsonify({'success': False, 'message': '人机验证失败，请重试'}), 403
 
     users[username] = {
         'password_hash': _hash_password(password),
         'display_name': display_name,
-        'email': email,
     }
     _save_users()
     # 自动登录

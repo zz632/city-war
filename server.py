@@ -67,28 +67,25 @@ def is_game_server(host, port):
 def start_server(port, block=False):
     from app import app, socketio
 
+    # threading 模式需要 allow_unsafe_werkzeug
+    kwargs = {
+        'host': '0.0.0.0',
+        'port': port,
+        'debug': False,
+        'use_reloader': False,
+    }
+    if socketio.async_mode == 'threading':
+        kwargs['allow_unsafe_werkzeug'] = True
+
     if block:
-        socketio.run(
-            app,
-            host='0.0.0.0',
-            port=port,
-            debug=False,
-            use_reloader=False,
-            log_output=True,
-            allow_unsafe_werkzeug=True,
-        )
+        kwargs['log_output'] = True
+        socketio.run(app, **kwargs)
     else:
+        kwargs['log_output'] = False
         t = threading.Thread(
             target=socketio.run,
             args=(app,),
-            kwargs={
-                'host': '0.0.0.0',
-                'port': port,
-                'debug': False,
-                'use_reloader': False,
-                'log_output': False,
-                'allow_unsafe_werkzeug': True,
-            },
+            kwargs=kwargs,
             daemon=True,
         )
         t.start()
