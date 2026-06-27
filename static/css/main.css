@@ -240,32 +240,24 @@ body {
 }
 .oauth-btns {
     display: flex;
-    gap: 12px;
+    gap: 8px;
     justify-content: center;
+    flex-wrap: wrap;
 }
-.oauth-btn {
-    width: 44px;
-    height: 44px;
-    border-radius: 10px;
-    border: 1px solid var(--border);
-    background: var(--bg-input);
+.oauth-btn-text {
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: none;
+    background: transparent;
+    color: var(--c, var(--text));
+    font-size: 13px;
+    font-weight: 600;
     cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
     transition: all .15s;
-    padding: 0;
 }
-.oauth-btn svg {
-    width: 20px;
-    height: 20px;
-}
-.oauth-btn:hover {
-    border-color: var(--primary);
+.oauth-btn-text:hover {
     background: rgba(59,130,246,.08);
 }
-.oauth-github svg { color: #e8ecf4; }
-.oauth-discord svg { color: #5865F2; }
 
 /* 模态框 */
 .modal-overlay {
