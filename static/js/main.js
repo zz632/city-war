@@ -12,9 +12,7 @@ let amSpectator = false;    // 是否是观战者
 let authToken = localStorage.getItem('auth_token') || '';
 let isOnlineMode = false;
 let loggedInDisplayName = '';
-let turnstileSiteKey = '';
-let turnstileAvailable = false;  // Turnstile 脚本是否加载成功
-let turnstileWidgetIds = {};  // containerId -> widgetId
+let powData = {};  // containerId -> {challenge_id, challenge, difficulty, nonce}
 
 function authHeaders() {
     return authToken ? { 'Authorization': 'Bearer ' + authToken } : {};
@@ -39,11 +37,9 @@ function toast(msg, type = 'info') {
 
 // ===== 首页 =====
 function initHome() {
-    // 加载 Turnstile Site Key
-    fetch('/api/auth/turnstile_key').then(r => r.json()).then(data => {
-        turnstileSiteKey = data.site_key || '';
-        turnstileAvailable = !!turnstileSiteKey && !!window.turnstile;
-    }).catch(() => {});
+    // 加载 PoW 挑战（登录区域和游客区域各一个）
+    fetchPowChallenge('powContainerLogin');
+    fetchPowChallenge('powContainerGuest');
 
     // 检测是否在线模式
     fetch('/api/auth/online_mode').then(r => r.json()).then(data => {
@@ -58,7 +54,7 @@ function initHome() {
         e.preventDefault();
         document.getElementById('auth-login').style.display = 'none';
         document.getElementById('auth-register').style.display = 'block';
-        renderTurnstile('turnstileContainer');
+        fetchPowChallenge('powContainer');
     });
     document.getElementById('showLogin').addEventListener('click', e => {
         e.preventDefault();
@@ -137,9 +133,6 @@ function initHome() {
 function showAuthSection() {
     document.getElementById('auth-section').style.display = 'block';
     document.getElementById('game-section').style.display = 'none';
-    // 渲染登录和游客区域的 Turnstile
-    renderTurnstile('turnstileContainerLogin');
-    renderTurnstile('turnstileContainerGuest');
 }
 
 function showGameSection() {
@@ -183,17 +176,14 @@ async function doLogin() {
     const password = document.getElementById('loginPassword').value;
     if (!username || !password) { toast('请输入用户名和密码', 'error'); return; }
 
-    const turnstileToken = getTurnstileToken('turnstileContainerLogin');
-    if (turnstileAvailable && !turnstileToken) {
-        toast('请先完成人机验证', 'error');
-        return;
-    }
+    const pow = await solvePow('powContainerLogin');
+    if (!pow) { toast('验证计算中，请稍候', 'error'); return; }
 
     try {
         const res = await fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password, turnstile_token: turnstileToken })
+            body: JSON.stringify({ username, password, pow_challenge_id: pow.challenge_id, pow_nonce: pow.nonce })
         });
         const data = await res.json();
         if (data.success) {
@@ -203,40 +193,164 @@ async function doLogin() {
             showGameSection();
         } else {
             toast(data.message || '登录失败', 'error');
-            resetTurnstile('turnstileContainerLogin');
+            fetchPowChallenge('powContainerLogin');
         }
     } catch (e) {
         toast('网络错误', 'error');
     }
 }
 
-function renderTurnstile(containerId) {
+// ===== Proof of Work =====
+
+async function fetchPowChallenge(containerId) {
     const container = document.getElementById(containerId);
-    if (!container || !turnstileSiteKey || !window.turnstile) return;
-    container.innerHTML = '';
-    // 清除旧的 widget
-    const oldId = turnstileWidgetIds[containerId];
-    if (oldId !== undefined) {
-        try { turnstile.remove(oldId); } catch (e) {}
+    if (!container) return;
+    try {
+        const res = await fetch('/api/auth/pow_challenge');
+        const data = await res.json();
+        powData[containerId] = { challenge_id: data.challenge_id, challenge: data.challenge, difficulty: data.difficulty, nonce: null };
+        // 显示计算进度
+        container.innerHTML = '<span class="pow-status">安全验证就绪</span>';
+        // 后台预计算
+        solvePowInBackground(containerId);
+    } catch (e) {
+        container.innerHTML = '';
+        powData[containerId] = null;
     }
-    turnstileWidgetIds[containerId] = turnstile.render(container, {
-        sitekey: turnstileSiteKey,
-        theme: 'dark',
-        size: 'normal'
+}
+
+function solvePowInBackground(containerId) {
+    const data = powData[containerId];
+    if (!data) return;
+    const container = document.getElementById(containerId);
+
+    const prefix = '0'.repeat(data.difficulty);
+    const challenge = data.challenge;
+    let nonce = 0;
+
+    function step() {
+        const batch = 5000;
+        for (let i = 0; i < batch; i++) {
+            const hash = sha256(challenge + nonce);
+            if (hash.startsWith(prefix)) {
+                data.nonce = String(nonce);
+                if (container) container.innerHTML = '<span class="pow-status pow-done">验证就绪</span>';
+                return;
+            }
+            nonce++;
+        }
+        // 继续下一批
+        if (container) container.innerHTML = '<span class="pow-status pow-computing">计算中...</span>';
+        requestAnimationFrame(step);
+    }
+    step();
+}
+
+async function solvePow(containerId) {
+    const data = powData[containerId];
+    if (!data) {
+        await fetchPowChallenge(containerId);
+        const d = powData[containerId];
+        if (!d) return null;
+        // 等待计算完成
+        return new Promise(resolve => {
+            const check = setInterval(() => {
+                if (d.nonce !== null) {
+                    clearInterval(check);
+                    resolve({ challenge_id: d.challenge_id, nonce: d.nonce });
+                }
+            }, 50);
+            // 超时10秒
+            setTimeout(() => { clearInterval(check); resolve(null); }, 10000);
+        });
+    }
+    if (data.nonce !== null) {
+        return { challenge_id: data.challenge_id, nonce: data.nonce };
+    }
+    // 等待计算完成
+    return new Promise(resolve => {
+        const check = setInterval(() => {
+            if (data.nonce !== null) {
+                clearInterval(check);
+                resolve({ challenge_id: data.challenge_id, nonce: data.nonce });
+            }
+        }, 50);
+        setTimeout(() => { clearInterval(check); resolve(null); }, 10000);
     });
 }
 
-function getTurnstileToken(containerId) {
-    const widgetId = turnstileWidgetIds[containerId];
-    if (!turnstileSiteKey || !window.turnstile || widgetId === undefined) return '';
-    return turnstile.getResponse(widgetId) || '';
+// SHA-256（纯JS实现，无外部依赖）
+function sha256(str) {
+    // 使用 SubtleCrypto API（浏览器原生）
+    // 同步版本用简单实现
+    if (sha256._sync) return sha256._sync(str);
+    // 降级：用内联的简易SHA256
+    return sha256Simple(str);
 }
 
-function resetTurnstile(containerId) {
-    const widgetId = turnstileWidgetIds[containerId];
-    if (window.turnstile && widgetId !== undefined) {
-        try { turnstile.reset(widgetId); } catch (e) {}
+// 简易同步 SHA-256 实现
+function sha256Simple(str) {
+    const K = [
+        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x10e8270c,0x27b70a85,0x3c5ef3a6,0x455a14ed,0x56b2a05b,
+        0x682bb8b3,0x7eb8c6d1,0x90bf8e8a,0xa1d1937e,0x3de87e0b,0x17f6be88,0x1929f5d5,0x1e376c08,
+        0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,
+        0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+    ];
+    function rotr(x, n) { return (x >>> n) | (x << (32 - n)); }
+    function ch(x, y, z) { return (x & y) ^ (~x & z); }
+    function maj(x, y, z) { return (x & y) ^ (x & z) ^ (y & z); }
+    function ep0(x) { return rotr(x, 2) ^ rotr(x, 13) ^ rotr(x, 22); }
+    function ep1(x) { return rotr(x, 6) ^ rotr(x, 11) ^ rotr(x, 25); }
+    function sig0(x) { return rotr(x, 7) ^ rotr(x, 18) ^ (x >>> 3); }
+    function sig1(x) { return rotr(x, 17) ^ rotr(x, 19) ^ (x >>> 10); }
+
+    // 编码为UTF-8字节
+    const bytes = new TextEncoder().encode(str);
+    const len = bytes.length;
+
+    // 填充
+    const bitLen = len * 8;
+    const padLen = ((56 - (len + 1) % 64) + 64) % 64;
+    const totalLen = len + 1 + padLen + 8;
+    const msg = new Uint8Array(totalLen);
+    msg.set(bytes);
+    msg[len] = 0x80;
+    const view = new DataView(msg.buffer);
+    view.setUint32(totalLen - 4, bitLen, false);
+    view.setUint32(totalLen - 8, 0, false);
+
+    // 初始哈希值
+    let h0=0x6a09e667, h1=0xbb67ae85, h2=0x3c6ef372, h3=0xa54ff53a;
+    let h4=0x510e527f, h5=0x9b05688c, h6=0x1f83d9ab, h7=0x5be0cd19;
+
+    // 处理每个512-bit块
+    for (let offset = 0; offset < totalLen; offset += 64) {
+        const w = new Uint32Array(64);
+        for (let i = 0; i < 16; i++) {
+            w[i] = view.getUint32(offset + i * 4, false);
+        }
+        for (let i = 16; i < 64; i++) {
+            w[i] = (sig1(w[i-2]) + w[i-7] + sig0(w[i-15]) + w[i-16]) | 0;
+        }
+
+        let a=h0, b=h1, c=h2, d=h3, e=h4, f=h5, g=h6, hh=h7;
+        for (let i = 0; i < 64; i++) {
+            const t1 = (hh + ep1(e) + ch(e, f, g) + K[i] + w[i]) | 0;
+            const t2 = (ep0(a) + maj(a, b, c)) | 0;
+            hh = g; g = f; f = e; e = (d + t1) | 0;
+            d = c; c = b; b = a; a = (t1 + t2) | 0;
+        }
+        h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0;
+        h4 = (h4 + e) | 0; h5 = (h5 + f) | 0; h6 = (h6 + g) | 0; h7 = (h7 + hh) | 0;
     }
+
+    // 输出十六进制
+    const hex = [h0, h1, h2, h3, h4, h5, h6, h7].map(v =>
+        (v >>> 0).toString(16).padStart(8, '0')
+    ).join('');
+    return hex;
 }
 
 async function doRegister() {
@@ -245,14 +359,11 @@ async function doRegister() {
     const password = document.getElementById('regPassword').value;
     if (!username || !password) { toast('请填写用户名和密码', 'error'); return; }
 
-    const turnstileToken = getTurnstileToken('turnstileContainer');
-    if (turnstileAvailable && !turnstileToken) {
-        toast('请先完成人机验证', 'error');
-        return;
-    }
+    const pow = await solvePow('powContainer');
+    if (!pow) { toast('验证计算中，请稍候', 'error'); return; }
 
     try {
-        const body = { username, display_name, password, turnstile_token: turnstileToken };
+        const body = { username, display_name, password, pow_challenge_id: pow.challenge_id, pow_nonce: pow.nonce };
         const res = await fetch('/api/auth/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -266,7 +377,7 @@ async function doRegister() {
             showGameSection();
         } else {
             toast(data.message || '注册失败', 'error');
-            resetTurnstile('turnstileContainer');
+            fetchPowChallenge('powContainer');
         }
     } catch (e) {
         toast('网络错误', 'error');
@@ -277,17 +388,14 @@ async function doGuestLogin() {
     const display_name = document.getElementById('guestName').value.trim();
     if (!display_name) { toast('请输入昵称', 'error'); return; }
 
-    const turnstileToken = getTurnstileToken('turnstileContainerGuest');
-    if (turnstileAvailable && !turnstileToken) {
-        toast('请先完成人机验证', 'error');
-        return;
-    }
+    const pow = await solvePow('powContainerGuest');
+    if (!pow) { toast('验证计算中，请稍候', 'error'); return; }
 
     try {
         const res = await fetch('/api/auth/guest', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ display_name, turnstile_token: turnstileToken })
+            body: JSON.stringify({ display_name, pow_challenge_id: pow.challenge_id, pow_nonce: pow.nonce })
         });
         const data = await res.json();
         if (data.success) {
@@ -297,7 +405,7 @@ async function doGuestLogin() {
             showGameSection();
         } else {
             toast(data.message || '登录失败', 'error');
-            resetTurnstile('turnstileContainerGuest');
+            fetchPowChallenge('powContainerGuest');
         }
     } catch (e) {
         toast('网络错误', 'error');
