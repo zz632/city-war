@@ -228,10 +228,21 @@ body {
     padding: 10px 12px;
 }
 
-.turnstile-container {
-    margin-bottom: 16px;
+.pow-container {
+    margin-bottom: 8px;
+    min-height: 20px;
     display: flex;
-    justify-content: flex-start;
+    align-items: center;
+}
+.pow-status {
+    font-size: 12px;
+    color: var(--text-dim);
+}
+.pow-status.pow-done {
+    color: var(--green);
+}
+.pow-status.pow-computing {
+    color: var(--orange);
 }
 
 /* OAuth 按钮 */

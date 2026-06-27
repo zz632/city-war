@@ -90,9 +90,15 @@ ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'zz632')
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'Qiqi130102')
 admin_sessions = {}  # admin_token -> True
 
-# ===== Cloudflare Turnstile 配置 =====
-TURNSTILE_SITE_KEY = os.environ.get('TURNSTILE_SITE_KEY', '')
-TURNSTILE_SECRET_KEY = os.environ.get('TURNSTILE_SECRET_KEY', '')
+# ===== Proof of Work 验证 =====
+POW_DIFFICULTY = int(os.environ.get('POW_DIFFICULTY', '4'))  # 前导零十六进制位数（4=16bit，约0.1-0.5秒）
+POW_CHALLENGES = {}  # challenge_id -> {challenge, difficulty, created_at}
+POW_EXPIRE_SECONDS = 300  # 挑战5分钟过期
+
+# ===== IP 限流 =====
+IP_RATE_LIMIT = {}  # ip -> {count, reset_time}
+IP_RATE_LIMIT_MAX = 10  # 每IP每分钟最多10次请求
+IP_RATE_LIMIT_WINDOW = 60  # 限流窗口（秒）
 
 # ===== OAuth 配置 =====
 OAUTH_PROVIDERS = {
@@ -125,26 +131,39 @@ OAUTH_PROVIDERS = {
 oauth_states = {}
 
 
-def verify_turnstile(token, remote_ip):
-    """验证 Cloudflare Turnstile token"""
-    if not TURNSTILE_SECRET_KEY:
-        return True  # 未配置时跳过验证
-    if not token:
-        return False
-    try:
-        url = 'https://challenges.cloudflare.com/turnstile/v0/siteverify'
-        data = urllib.parse.urlencode({
-            'secret': TURNSTILE_SECRET_KEY,
-            'response': token,
-            'remoteip': remote_ip
-        }).encode()
-        req = urllib.request.Request(url, data=data)
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            result = json.loads(resp.read())
-            return result.get('success', False)
-    except Exception:
-        # 网络异常时放行，避免阻断用户
+def _cleanup_pow_challenges():
+    """清理过期的 PoW 挑战"""
+    now = time.time()
+    expired = [cid for cid, c in POW_CHALLENGES.items() if now - c['created_at'] > POW_EXPIRE_SECONDS]
+    for cid in expired:
+        del POW_CHALLENGES[cid]
+
+
+def _check_rate_limit(ip):
+    """检查IP限流，返回True表示允许，False表示超限"""
+    now = time.time()
+    info = IP_RATE_LIMIT.get(ip)
+    if not info or now > info['reset_time']:
+        IP_RATE_LIMIT[ip] = {'count': 1, 'reset_time': now + IP_RATE_LIMIT_WINDOW}
         return True
+    info['count'] += 1
+    return info['count'] <= IP_RATE_LIMIT_MAX
+
+
+def verify_pow(challenge_id, nonce):
+    """验证 Proof of Work：检查 nonce 是否使 hash 满足难度要求"""
+    if not challenge_id or not nonce:
+        return False
+    challenge = POW_CHALLENGES.pop(challenge_id, None)
+    if not challenge:
+        return False
+    # 检查是否过期
+    if time.time() - challenge['created_at'] > POW_EXPIRE_SECONDS:
+        return False
+    # 计算 hash
+    hash_hex = hashlib.sha256((challenge['challenge'] + nonce).encode()).hexdigest()
+    # 检查前导零
+    return hash_hex.startswith('0' * challenge['difficulty'])
 
 
 def _hash_password(password):
@@ -201,11 +220,14 @@ def require_login_online():
 
 @app.route('/api/auth/register', methods=['POST'])
 def api_register():
+    if not _check_rate_limit(request.remote_addr):
+        return jsonify({'success': False, 'message': '请求过于频繁，请稍后再试'}), 429
     data = request.get_json() or {}
     username = data.get('username', '').strip()
     password = data.get('password', '')
     display_name = data.get('display_name', '').strip() or username
-    turnstile_token = data.get('turnstile_token', '')
+    pow_challenge_id = data.get('pow_challenge_id', '')
+    pow_nonce = data.get('pow_nonce', '')
 
     if not username or not password:
         return jsonify({'success': False, 'message': '用户名和密码不能为空'}), 400
@@ -216,12 +238,9 @@ def api_register():
     if username in users:
         return jsonify({'success': False, 'message': '用户名已被占用'}), 400
 
-    # Cloudflare Turnstile 人机验证
-    if TURNSTILE_SECRET_KEY:
-        if not turnstile_token:
-            return jsonify({'success': False, 'message': '请完成人机验证'}), 403
-        if not verify_turnstile(turnstile_token, request.remote_addr):
-            return jsonify({'success': False, 'message': '人机验证失败，请重试'}), 403
+    # Proof of Work 验证
+    if not verify_pow(pow_challenge_id, pow_nonce):
+        return jsonify({'success': False, 'message': '验证失败，请重试'}), 403
 
     users[username] = {
         'password_hash': _hash_password(password),
@@ -236,20 +255,20 @@ def api_register():
 
 @app.route('/api/auth/login', methods=['POST'])
 def api_login():
+    if not _check_rate_limit(request.remote_addr):
+        return jsonify({'success': False, 'message': '请求过于频繁，请稍后再试'}), 429
     data = request.get_json() or {}
     username = data.get('username', '').strip()
     password = data.get('password', '')
-    turnstile_token = data.get('turnstile_token', '')
+    pow_challenge_id = data.get('pow_challenge_id', '')
+    pow_nonce = data.get('pow_nonce', '')
 
     if not username or not password:
         return jsonify({'success': False, 'message': '用户名和密码不能为空'}), 400
 
-    # Cloudflare Turnstile 人机验证
-    if TURNSTILE_SECRET_KEY:
-        if not turnstile_token:
-            return jsonify({'success': False, 'message': '请完成人机验证'}), 403
-        if not verify_turnstile(turnstile_token, request.remote_addr):
-            return jsonify({'success': False, 'message': '人机验证失败，请重试'}), 403
+    # Proof of Work 验证
+    if not verify_pow(pow_challenge_id, pow_nonce):
+        return jsonify({'success': False, 'message': '验证失败，请重试'}), 403
 
     user = users.get(username)
     if not user or user['password_hash'] != _hash_password(password):
@@ -262,22 +281,22 @@ def api_login():
 
 @app.route('/api/auth/guest', methods=['POST'])
 def api_guest_login():
-    """游客登录：输入昵称 + Turnstile 验证"""
+    """游客登录：输入昵称 + PoW 验证"""
+    if not _check_rate_limit(request.remote_addr):
+        return jsonify({'success': False, 'message': '请求过于频繁，请稍后再试'}), 429
     data = request.get_json() or {}
     display_name = data.get('display_name', '').strip()
-    turnstile_token = data.get('turnstile_token', '')
+    pow_challenge_id = data.get('pow_challenge_id', '')
+    pow_nonce = data.get('pow_nonce', '')
 
     if not display_name:
         return jsonify({'success': False, 'message': '请输入昵称'}), 400
     if len(display_name) < 1 or len(display_name) > 12:
         return jsonify({'success': False, 'message': '昵称需要1-12个字符'}), 400
 
-    # Cloudflare Turnstile 人机验证
-    if TURNSTILE_SECRET_KEY:
-        if not turnstile_token:
-            return jsonify({'success': False, 'message': '请完成人机验证'}), 403
-        if not verify_turnstile(turnstile_token, request.remote_addr):
-            return jsonify({'success': False, 'message': '人机验证失败，请重试'}), 403
+    # Proof of Work 验证
+    if not verify_pow(pow_challenge_id, pow_nonce):
+        return jsonify({'success': False, 'message': '验证失败，请重试'}), 403
 
     # 生成游客用户名（guest_ + 随机数）
     guest_id = str(uuid.uuid4())[:8]
@@ -308,10 +327,22 @@ def api_online_mode():
     return jsonify({'online': ONLINE_MODE})
 
 
-@app.route('/api/auth/turnstile_key', methods=['GET'])
-def api_turnstile_key():
-    """返回 Cloudflare Turnstile Site Key（前端渲染 widget 需要）"""
-    return jsonify({'site_key': TURNSTILE_SITE_KEY})
+@app.route('/api/auth/pow_challenge', methods=['GET'])
+def api_pow_challenge():
+    """生成 PoW 挑战"""
+    _cleanup_pow_challenges()
+    challenge_id = uuid.uuid4().hex
+    challenge_str = uuid.uuid4().hex + uuid.uuid4().hex
+    POW_CHALLENGES[challenge_id] = {
+        'challenge': challenge_str,
+        'difficulty': POW_DIFFICULTY,
+        'created_at': time.time(),
+    }
+    return jsonify({
+        'challenge_id': challenge_id,
+        'challenge': challenge_str,
+        'difficulty': POW_DIFFICULTY,
+    })
 
 
 @app.route('/api/auth/oauth/<provider>', methods=['GET'])
