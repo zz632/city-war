@@ -13,7 +13,7 @@ let authToken = localStorage.getItem('auth_token') || '';
 let isOnlineMode = false;
 let loggedInDisplayName = '';
 let turnstileSiteKey = '';
-let turnstileWidgetId = null;
+let turnstileWidgetIds = {};  // containerId -> widgetId
 
 function authHeaders() {
     return authToken ? { 'Authorization': 'Bearer ' + authToken } : {};
@@ -46,17 +46,8 @@ function initHome() {
     // 检测是否在线模式
     fetch('/api/auth/online_mode').then(r => r.json()).then(data => {
         isOnlineMode = data.online;
-        if (isOnlineMode) {
-            // 在线模式：隐藏游客按钮
-            document.getElementById('guest-entry').style.display = 'none';
-            checkExistingLogin();
-        } else {
-            // 本地模式：显示游客按钮
-            document.getElementById('guest-entry').style.display = 'block';
-            checkExistingLogin();
-        }
+        checkExistingLogin();
     }).catch(() => {
-        document.getElementById('guest-entry').style.display = 'block';
         showAuthSection();
     });
 
@@ -65,7 +56,7 @@ function initHome() {
         e.preventDefault();
         document.getElementById('auth-login').style.display = 'none';
         document.getElementById('auth-register').style.display = 'block';
-        renderTurnstile();
+        renderTurnstile('turnstileContainer');
     });
     document.getElementById('showLogin').addEventListener('click', e => {
         e.preventDefault();
@@ -84,14 +75,33 @@ function initHome() {
     // 退出登录
     document.getElementById('logoutBtn').addEventListener('click', doLogout);
 
+    // 账号设置
+    document.getElementById('settingsBtn').addEventListener('click', openProfileModal);
+
     // 游客模式
-    document.getElementById('guestBtn').addEventListener('click', () => {
-        showGameSection();
-    });
+    document.getElementById('guestBtn').addEventListener('click', doGuestLogin);
+    document.getElementById('guestName').addEventListener('keypress', e => { if (e.key === 'Enter') doGuestLogin(); });
 
     // 游戏进入
     const enterBtn = document.getElementById('enterBtn');
     const playerNameInput = document.getElementById('playerName');
+
+    // OAuth 回调错误处理
+    const urlParams = new URLSearchParams(window.location.search);
+    const oauthError = urlParams.get('oauth_error');
+    if (oauthError) {
+        window.history.replaceState({}, '', '/');
+        toast('第三方登录失败，请重试', 'error');
+    }
+    // OAuth 回调成功：从 cookie 读取 auth_token
+    const cookieToken = document.cookie.split('; ').find(r => r.startsWith('auth_token='))?.split('=')[1];
+    if (cookieToken) {
+        authToken = cookieToken;
+        localStorage.setItem('auth_token', authToken);
+        document.cookie = 'auth_token=; path=/; max-age=0'; // 清除 cookie
+        // 验证 token
+        checkExistingLogin();
+    }
     const roomCodeInput = document.getElementById('roomCode');
 
     enterBtn.addEventListener('click', () => {
@@ -116,6 +126,9 @@ function initHome() {
 function showAuthSection() {
     document.getElementById('auth-section').style.display = 'block';
     document.getElementById('game-section').style.display = 'none';
+    // 渲染登录和游客区域的 Turnstile
+    renderTurnstile('turnstileContainerLogin');
+    renderTurnstile('turnstileContainerGuest');
 }
 
 function showGameSection() {
@@ -158,11 +171,18 @@ async function doLogin() {
     const username = document.getElementById('loginUsername').value.trim();
     const password = document.getElementById('loginPassword').value;
     if (!username || !password) { toast('请输入用户名和密码', 'error'); return; }
+
+    const turnstileToken = getTurnstileToken('turnstileContainerLogin');
+    if (turnstileSiteKey && !turnstileToken) {
+        toast('请先完成人机验证', 'error');
+        return;
+    }
+
     try {
         const res = await fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
+            body: JSON.stringify({ username, password, turnstile_token: turnstileToken })
         });
         const data = await res.json();
         if (data.success) {
@@ -172,22 +192,39 @@ async function doLogin() {
             showGameSection();
         } else {
             toast(data.message || '登录失败', 'error');
+            resetTurnstile('turnstileContainerLogin');
         }
     } catch (e) {
         toast('网络错误', 'error');
     }
 }
 
-function renderTurnstile() {
-    const container = document.getElementById('turnstileContainer');
-    if (!container || !turnstileSiteKey) return;
+function renderTurnstile(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container || !turnstileSiteKey || !window.turnstile) return;
     container.innerHTML = '';
-    if (window.turnstile) {
-        turnstileWidgetId = turnstile.render(container, {
-            sitekey: turnstileSiteKey,
-            theme: 'dark',
-            size: 'normal'
-        });
+    // 清除旧的 widget
+    const oldId = turnstileWidgetIds[containerId];
+    if (oldId !== undefined) {
+        try { turnstile.remove(oldId); } catch (e) {}
+    }
+    turnstileWidgetIds[containerId] = turnstile.render(container, {
+        sitekey: turnstileSiteKey,
+        theme: 'dark',
+        size: 'normal'
+    });
+}
+
+function getTurnstileToken(containerId) {
+    const widgetId = turnstileWidgetIds[containerId];
+    if (!turnstileSiteKey || !window.turnstile || widgetId === undefined) return '';
+    return turnstile.getResponse(widgetId) || '';
+}
+
+function resetTurnstile(containerId) {
+    const widgetId = turnstileWidgetIds[containerId];
+    if (window.turnstile && widgetId !== undefined) {
+        try { turnstile.reset(widgetId); } catch (e) {}
     }
 }
 
@@ -197,14 +234,10 @@ async function doRegister() {
     const password = document.getElementById('regPassword').value;
     if (!username || !password) { toast('请填写用户名和密码', 'error'); return; }
 
-    // 获取 Turnstile token
-    let turnstileToken = '';
-    if (turnstileSiteKey && window.turnstile && turnstileWidgetId !== null) {
-        turnstileToken = turnstile.getResponse(turnstileWidgetId) || '';
-        if (!turnstileToken) {
-            toast('请先完成人机验证', 'error');
-            return;
-        }
+    const turnstileToken = getTurnstileToken('turnstileContainer');
+    if (turnstileSiteKey && !turnstileToken) {
+        toast('请先完成人机验证', 'error');
+        return;
     }
 
     try {
@@ -222,10 +255,38 @@ async function doRegister() {
             showGameSection();
         } else {
             toast(data.message || '注册失败', 'error');
-            // 重置 Turnstile 以便重试
-            if (window.turnstile && turnstileWidgetId !== null) {
-                try { turnstile.reset(turnstileWidgetId); } catch (e) {}
-            }
+            resetTurnstile('turnstileContainer');
+        }
+    } catch (e) {
+        toast('网络错误', 'error');
+    }
+}
+
+async function doGuestLogin() {
+    const display_name = document.getElementById('guestName').value.trim();
+    if (!display_name) { toast('请输入昵称', 'error'); return; }
+
+    const turnstileToken = getTurnstileToken('turnstileContainerGuest');
+    if (turnstileSiteKey && !turnstileToken) {
+        toast('请先完成人机验证', 'error');
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/auth/guest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ display_name, turnstile_token: turnstileToken })
+        });
+        const data = await res.json();
+        if (data.success) {
+            authToken = data.token;
+            loggedInDisplayName = data.display_name;
+            localStorage.setItem('auth_token', authToken);
+            showGameSection();
+        } else {
+            toast(data.message || '登录失败', 'error');
+            resetTurnstile('turnstileContainerGuest');
         }
     } catch (e) {
         toast('网络错误', 'error');
@@ -237,6 +298,76 @@ function doLogout() {
     loggedInDisplayName = '';
     localStorage.removeItem('auth_token');
     showAuthSection();
+}
+
+// ===== OAuth 登录 =====
+
+function oauthLogin(provider) {
+    window.location.href = '/api/auth/oauth/' + provider + '?redirect=/';
+}
+
+// ===== 账号设置 =====
+
+async function openProfileModal() {
+    const modal = document.getElementById('profileModal');
+    modal.style.display = 'flex';
+    try {
+        const res = await fetch('/api/auth/profile', { headers: authHeaders() });
+        const data = await res.json();
+        if (data.success) {
+            document.getElementById('profileDisplayName').value = data.display_name || '';
+            document.getElementById('profileInfo').innerHTML =
+                '<div class="profile-row"><span class="profile-label">用户名</span><span>' + data.username + '</span></div>' +
+                (data.email ? '<div class="profile-row"><span class="profile-label">邮箱</span><span>' + data.email + '</span></div>' : '') +
+                (data.oauth_provider ? '<div class="profile-row"><span class="profile-label">登录方式</span><span>' + data.oauth_provider.toUpperCase() + '</span></div>' : '') +
+                (data.is_guest ? '<div class="profile-row"><span class="profile-label">账号类型</span><span>游客</span></div>' : '');
+            // OAuth 账号和游客不显示密码修改
+            document.getElementById('profilePasswordSection').style.display =
+                (data.is_guest || data.oauth_provider) ? 'none' : 'block';
+        } else {
+            toast(data.message || '获取信息失败', 'error');
+            modal.style.display = 'none';
+        }
+    } catch (e) {
+        toast('网络错误', 'error');
+        modal.style.display = 'none';
+    }
+}
+
+function closeProfileModal() {
+    document.getElementById('profileModal').style.display = 'none';
+}
+
+async function saveProfile() {
+    const display_name = document.getElementById('profileDisplayName').value.trim();
+    const old_password = document.getElementById('profileOldPassword').value;
+    const new_password = document.getElementById('profileNewPassword').value;
+
+    try {
+        const body = { display_name };
+        if (new_password) {
+            body.old_password = old_password;
+            body.new_password = new_password;
+        }
+        const res = await fetch('/api/auth/profile', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (data.success) {
+            toast('修改成功', 'success');
+            if (data.display_name) {
+                loggedInDisplayName = data.display_name;
+                document.getElementById('logged-in-name').textContent = loggedInDisplayName;
+            }
+            closeProfileModal();
+        } else {
+            toast(data.message || '修改失败', 'error');
+        }
+    } catch (e) {
+        toast('网络错误', 'error');
+    }
 }
 
 async function createRoom(name) {

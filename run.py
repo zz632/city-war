@@ -10,6 +10,7 @@ import os
 import sys
 import socket
 import threading
+import webbrowser
 import webview
 
 from server import wait_for_server
@@ -66,6 +67,11 @@ class GameApi:
         if w:
             w.destroy()
 
+    def open_external(self, url):
+        """用系统浏览器打开外部链接"""
+        if url and url.startswith('http'):
+            webbrowser.open(url)
+
     def _do_connect(self, host, port):
         self._set_status('正在连接...')
 
@@ -103,6 +109,19 @@ def _on_loaded():
         return
     if not url:
         return
+    # 拦截 target="_blank" 链接，用系统浏览器打开而不是弹新窗口
+    try:
+        w.evaluate_js('''
+            document.addEventListener('click', function(e) {
+                var a = e.target.closest('a');
+                if (a && a.target === '_blank') {
+                    e.preventDefault();
+                    window.pywebview.api.open_external(a.href);
+                }
+            });
+        ''')
+    except Exception:
+        pass
     if '/lobby/' in url or '/game/' in url:
         w.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
 
