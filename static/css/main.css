@@ -234,6 +234,96 @@ body {
     justify-content: flex-start;
 }
 
+/* OAuth 按钮 */
+.oauth-section {
+    margin-top: 4px;
+}
+.oauth-btns {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+}
+.oauth-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-input);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all .15s;
+    padding: 0;
+}
+.oauth-btn svg {
+    width: 20px;
+    height: 20px;
+}
+.oauth-btn:hover {
+    border-color: var(--primary);
+    background: rgba(59,130,246,.08);
+}
+.oauth-github svg { color: #e8ecf4; }
+.oauth-discord svg { color: #5865F2; }
+
+/* 模态框 */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+.modal-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 32px;
+    max-width: 340px;
+    width: 90%;
+}
+.modal-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    text-align: center;
+}
+.modal-btns {
+    display: flex;
+    gap: 12px;
+    margin-top: 16px;
+}
+.modal-btns .btn {
+    flex: 1;
+}
+
+/* 账号信息 */
+.profile-info {
+    margin-bottom: 12px;
+}
+.profile-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+}
+.profile-label {
+    color: var(--text-dim);
+}
+
+/* 登录信息栏 */
+.logged-in-actions {
+    display: flex;
+    gap: 8px;
+}
+
 .auth-switch {
     text-align: center;
     margin-top: 16px;

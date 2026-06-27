@@ -39,7 +39,11 @@ users = {}  # username -> {password_hash, display_name}
 sessions = {}  # session_token -> username
 
 # ===== 用户数据持久化 =====
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+# HF Spaces 持久化目录为 /data，本地运行为项目目录下的 data/
+if os.path.exists('/data') and os.access('/data', os.W_OK):
+    DATA_DIR = '/data'
+else:
+    DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 USERS_FILE = os.path.join(DATA_DIR, 'users.json')
 
 
@@ -75,6 +79,36 @@ admin_sessions = {}  # admin_token -> True
 # ===== Cloudflare Turnstile 配置 =====
 TURNSTILE_SITE_KEY = os.environ.get('TURNSTILE_SITE_KEY', '')
 TURNSTILE_SECRET_KEY = os.environ.get('TURNSTILE_SECRET_KEY', '')
+
+# ===== OAuth 配置 =====
+OAUTH_PROVIDERS = {
+    'github': {
+        'client_id': os.environ.get('GITHUB_CLIENT_ID', ''),
+        'client_secret': os.environ.get('GITHUB_CLIENT_SECRET', ''),
+        'auth_url': 'https://github.com/login/oauth/authorize',
+        'token_url': 'https://github.com/login/oauth/access_token',
+        'api_url': 'https://api.github.com/user',
+        'scope': 'read:user,user:email',
+    },
+    'google': {
+        'client_id': os.environ.get('GOOGLE_CLIENT_ID', ''),
+        'client_secret': os.environ.get('GOOGLE_CLIENT_SECRET', ''),
+        'auth_url': 'https://accounts.google.com/o/oauth2/v2/auth',
+        'token_url': 'https://oauth2.googleapis.com/token',
+        'api_url': 'https://www.googleapis.com/oauth2/v2/userinfo',
+        'scope': 'openid profile email',
+    },
+    'discord': {
+        'client_id': os.environ.get('DISCORD_CLIENT_ID', ''),
+        'client_secret': os.environ.get('DISCORD_CLIENT_SECRET', ''),
+        'auth_url': 'https://discord.com/api/oauth2/authorize',
+        'token_url': 'https://discord.com/api/oauth2/token',
+        'api_url': 'https://discord.com/api/users/@me',
+        'scope': 'identify email',
+    },
+}
+# OAuth state 存储: state -> {provider, redirect}
+oauth_states = {}
 
 
 def verify_turnstile(token, remote_ip):
@@ -191,9 +225,17 @@ def api_login():
     data = request.get_json() or {}
     username = data.get('username', '').strip()
     password = data.get('password', '')
+    turnstile_token = data.get('turnstile_token', '')
 
     if not username or not password:
         return jsonify({'success': False, 'message': '用户名和密码不能为空'}), 400
+
+    # Cloudflare Turnstile 人机验证
+    if TURNSTILE_SECRET_KEY:
+        if not turnstile_token:
+            return jsonify({'success': False, 'message': '请完成人机验证'}), 403
+        if not verify_turnstile(turnstile_token, request.remote_addr):
+            return jsonify({'success': False, 'message': '人机验证失败，请重试'}), 403
 
     user = users.get(username)
     if not user or user['password_hash'] != _hash_password(password):
@@ -202,6 +244,41 @@ def api_login():
     token = uuid.uuid4().hex
     sessions[token] = username
     return jsonify({'success': True, 'token': token, 'username': username, 'display_name': user['display_name']})
+
+
+@app.route('/api/auth/guest', methods=['POST'])
+def api_guest_login():
+    """游客登录：输入昵称 + Turnstile 验证"""
+    data = request.get_json() or {}
+    display_name = data.get('display_name', '').strip()
+    turnstile_token = data.get('turnstile_token', '')
+
+    if not display_name:
+        return jsonify({'success': False, 'message': '请输入昵称'}), 400
+    if len(display_name) < 1 or len(display_name) > 12:
+        return jsonify({'success': False, 'message': '昵称需要1-12个字符'}), 400
+
+    # Cloudflare Turnstile 人机验证
+    if TURNSTILE_SECRET_KEY:
+        if not turnstile_token:
+            return jsonify({'success': False, 'message': '请完成人机验证'}), 403
+        if not verify_turnstile(turnstile_token, request.remote_addr):
+            return jsonify({'success': False, 'message': '人机验证失败，请重试'}), 403
+
+    # 生成游客用户名（guest_ + 随机数）
+    guest_id = str(uuid.uuid4())[:8]
+    username = f'guest_{guest_id}'
+
+    users[username] = {
+        'password_hash': '',
+        'display_name': display_name,
+        'is_guest': True,
+    }
+    _save_users()
+
+    token = uuid.uuid4().hex
+    sessions[token] = username
+    return jsonify({'success': True, 'token': token, 'username': username, 'display_name': display_name})
 
 
 @app.route('/api/auth/check', methods=['GET'])
@@ -221,6 +298,189 @@ def api_online_mode():
 def api_turnstile_key():
     """返回 Cloudflare Turnstile Site Key（前端渲染 widget 需要）"""
     return jsonify({'site_key': TURNSTILE_SITE_KEY})
+
+
+@app.route('/api/auth/oauth/<provider>', methods=['GET'])
+def oauth_redirect(provider):
+    """跳转到 OAuth 提供方授权页面"""
+    if provider not in OAUTH_PROVIDERS:
+        return jsonify({'success': False, 'message': f'不支持的登录方式: {provider}'}), 400
+
+    cfg = OAUTH_PROVIDERS[provider]
+    if not cfg['client_id']:
+        return jsonify({'success': False, 'message': f'{provider} 登录未配置'}), 400
+
+    state = uuid.uuid4().hex
+    redirect_url = request.args.get('redirect', '/')
+    oauth_states[state] = {'provider': provider, 'redirect': redirect_url}
+
+    params = {
+        'client_id': cfg['client_id'],
+        'redirect_uri': request.host_url.rstrip('/') + '/api/auth/oauth/callback',
+        'response_type': 'code',
+        'scope': cfg['scope'],
+        'state': state,
+    }
+    auth_url = f"{cfg['auth_url']}?{urllib.parse.urlencode(params)}"
+    return redirect(auth_url)
+
+
+@app.route('/api/auth/oauth/callback', methods=['GET'])
+def oauth_callback():
+    """OAuth 回调：用 code 换 token，获取用户信息，登录/注册"""
+    code = request.args.get('code', '')
+    state = request.args.get('state', '')
+
+    if not code or not state or state not in oauth_states:
+        return redirect('/?oauth_error=invalid_request')
+
+    state_data = oauth_states.pop(state)
+    provider = state_data['provider']
+    redirect_to = state_data.get('redirect', '/')
+    cfg = OAUTH_PROVIDERS.get(provider)
+    if not cfg:
+        return redirect('/?oauth_error=unknown_provider')
+
+    # 用 code 换 access_token
+    try:
+        token_data = urllib.parse.urlencode({
+            'client_id': cfg['client_id'],
+            'client_secret': cfg['client_secret'],
+            'code': code,
+            'redirect_uri': request.host_url.rstrip('/') + '/api/auth/oauth/callback',
+            'grant_type': 'authorization_code',
+        }).encode()
+        headers = {'Accept': 'application/json'}
+        req = urllib.request.Request(cfg['token_url'], data=token_data, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            token_resp = json.loads(resp.read())
+        access_token = token_resp.get('access_token', '')
+        if not access_token:
+            return redirect('/?oauth_error=no_token')
+    except Exception:
+        return redirect('/?oauth_error=token_failed')
+
+    # 获取用户信息
+    try:
+        req = urllib.request.Request(cfg['api_url'], headers={'Authorization': f'Bearer {access_token}'})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            user_info = json.loads(resp.read())
+    except Exception:
+        return redirect('/?oauth_error=api_failed')
+
+    # 提取 OAuth ID 和显示名
+    if provider == 'github':
+        oauth_id = str(user_info.get('id', ''))
+        display_name = user_info.get('login', '') or user_info.get('name', '')
+        email = user_info.get('email', '')
+    elif provider == 'google':
+        oauth_id = str(user_info.get('id', ''))
+        display_name = user_info.get('name', '') or user_info.get('given_name', '')
+        email = user_info.get('email', '')
+    elif provider == 'discord':
+        oauth_id = str(user_info.get('id', ''))
+        display_name = user_info.get('username', '') or user_info.get('global_name', '')
+        email = user_info.get('email', '')
+    else:
+        return redirect('/?oauth_error=unknown_provider')
+
+    if not oauth_id:
+        return redirect('/?oauth_error=no_id')
+
+    return _oauth_login_or_register(provider, oauth_id, display_name, email, redirect_to)
+
+
+def _oauth_login_or_register(provider, oauth_id, display_name, email, redirect_to):
+    """OAuth 登录或注册的通用逻辑"""
+    oauth_key = f'{provider}_{oauth_id}'
+    for uname, udata in users.items():
+        if udata.get('oauth_id') == oauth_key:
+            # 已绑定，直接登录
+            token = uuid.uuid4().hex
+            sessions[token] = uname
+            resp = make_response(redirect(redirect_to))
+            resp.set_cookie('auth_token', token, httponly=True, max_age=86400 * 30)
+            return resp
+
+    # 未绑定，创建新账号
+    username = f'{provider}_{oauth_id}'
+    if username not in users:
+        users[username] = {
+            'password_hash': '',
+            'display_name': display_name,
+            'oauth_id': oauth_key,
+            'oauth_provider': provider,
+            'email': email,
+        }
+        _save_users()
+
+    token = uuid.uuid4().hex
+    sessions[token] = username
+    resp = make_response(redirect(redirect_to))
+    resp.set_cookie('auth_token', token, httponly=True, max_age=86400 * 30)
+    return resp
+
+
+@app.route('/api/auth/oauth_providers', methods=['GET'])
+def api_oauth_providers():
+    """返回已配置的 OAuth 提供方列表"""
+    providers = []
+    for name, cfg in OAUTH_PROVIDERS.items():
+        if cfg['client_id']:
+            providers.append({'name': name, 'label': name.capitalize()})
+    return jsonify({'providers': providers})
+
+
+# ===== 账号设置 =====
+
+@app.route('/api/auth/profile', methods=['GET'])
+def api_get_profile():
+    """获取当前用户信息"""
+    username = _check_login()
+    if not username or username not in users:
+        return jsonify({'success': False, 'message': '未登录'}), 401
+    u = users[username]
+    return jsonify({
+        'success': True,
+        'username': username,
+        'display_name': u.get('display_name', ''),
+        'email': u.get('email', ''),
+        'is_guest': u.get('is_guest', False),
+        'oauth_provider': u.get('oauth_provider', ''),
+    })
+
+
+@app.route('/api/auth/profile', methods=['POST'])
+def api_update_profile():
+    """更新用户信息（昵称、密码）"""
+    username = _check_login()
+    if not username or username not in users:
+        return jsonify({'success': False, 'message': '未登录'}), 401
+
+    u = users[username]
+    if u.get('is_guest'):
+        return jsonify({'success': False, 'message': '游客账号不支持修改'}), 400
+
+    data = request.get_json() or {}
+    display_name = data.get('display_name', '').strip()
+    new_password = data.get('new_password', '')
+    old_password = data.get('old_password', '')
+
+    if display_name:
+        u['display_name'] = display_name
+        _save_users()
+
+    if new_password:
+        if not old_password:
+            return jsonify({'success': False, 'message': '请输入旧密码'}), 400
+        if u.get('password_hash') and u['password_hash'] != _hash_password(old_password):
+            return jsonify({'success': False, 'message': '旧密码错误'}), 400
+        if len(new_password) < 4:
+            return jsonify({'success': False, 'message': '新密码至少4个字符'}), 400
+        u['password_hash'] = _hash_password(new_password)
+        _save_users()
+
+    return jsonify({'success': True, 'message': '修改成功', 'display_name': u['display_name']})
 
 ERROR_PAGE_STYLE = '''
 <style>
