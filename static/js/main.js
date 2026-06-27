@@ -13,6 +13,7 @@ let authToken = localStorage.getItem('auth_token') || '';
 let isOnlineMode = false;
 let loggedInDisplayName = '';
 let turnstileSiteKey = '';
+let turnstileAvailable = false;  // Turnstile 脚本是否加载成功
 let turnstileWidgetIds = {};  // containerId -> widgetId
 
 function authHeaders() {
@@ -41,6 +42,7 @@ function initHome() {
     // 加载 Turnstile Site Key
     fetch('/api/auth/turnstile_key').then(r => r.json()).then(data => {
         turnstileSiteKey = data.site_key || '';
+        turnstileAvailable = !!turnstileSiteKey && !!window.turnstile;
     }).catch(() => {});
 
     // 检测是否在线模式
@@ -173,7 +175,7 @@ async function doLogin() {
     if (!username || !password) { toast('请输入用户名和密码', 'error'); return; }
 
     const turnstileToken = getTurnstileToken('turnstileContainerLogin');
-    if (turnstileSiteKey && !turnstileToken) {
+    if (turnstileAvailable && !turnstileToken) {
         toast('请先完成人机验证', 'error');
         return;
     }
@@ -235,7 +237,7 @@ async function doRegister() {
     if (!username || !password) { toast('请填写用户名和密码', 'error'); return; }
 
     const turnstileToken = getTurnstileToken('turnstileContainer');
-    if (turnstileSiteKey && !turnstileToken) {
+    if (turnstileAvailable && !turnstileToken) {
         toast('请先完成人机验证', 'error');
         return;
     }
@@ -267,7 +269,7 @@ async function doGuestLogin() {
     if (!display_name) { toast('请输入昵称', 'error'); return; }
 
     const turnstileToken = getTurnstileToken('turnstileContainerGuest');
-    if (turnstileSiteKey && !turnstileToken) {
+    if (turnstileAvailable && !turnstileToken) {
         toast('请先完成人机验证', 'error');
         return;
     }
