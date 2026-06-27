@@ -292,6 +292,32 @@ body {
     max-width: 340px;
     width: 90%;
 }
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+}
+.modal-header h3 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0;
+}
+.modal-close {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 20px;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+    border-radius: 4px;
+    transition: all .15s;
+}
+.modal-close:hover {
+    color: var(--text);
+    background: rgba(255,255,255,.08);
+}
 .modal-title {
     font-size: 16px;
     font-weight: 600;
