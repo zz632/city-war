@@ -304,11 +304,11 @@ def api_turnstile_key():
 def oauth_redirect(provider):
     """跳转到 OAuth 提供方授权页面"""
     if provider not in OAUTH_PROVIDERS:
-        return jsonify({'success': False, 'message': f'不支持的登录方式: {provider}'}), 400
+        return redirect('/?oauth_error=unsupported')
 
     cfg = OAUTH_PROVIDERS[provider]
     if not cfg['client_id']:
-        return jsonify({'success': False, 'message': f'{provider} 登录未配置'}), 400
+        return redirect('/?oauth_error=not_configured')
 
     state = uuid.uuid4().hex
     redirect_url = request.args.get('redirect', '/')

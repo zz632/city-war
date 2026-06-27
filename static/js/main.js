@@ -93,7 +93,16 @@ function initHome() {
     const oauthError = urlParams.get('oauth_error');
     if (oauthError) {
         window.history.replaceState({}, '', '/');
-        toast('第三方登录失败，请重试', 'error');
+        const errorMsgs = {
+            'not_configured': '该登录方式暂未配置',
+            'unsupported': '不支持的登录方式',
+            'invalid_request': '请求无效，请重试',
+            'no_token': '获取授权失败',
+            'token_failed': '授权令牌获取失败',
+            'api_failed': '获取用户信息失败',
+            'no_id': '无法获取用户ID',
+        };
+        toast(errorMsgs[oauthError] || '第三方登录失败，请重试', 'error');
     }
     // OAuth 回调成功：从 cookie 读取 auth_token
     const cookieToken = document.cookie.split('; ').find(r => r.startsWith('auth_token='))?.split('=')[1];
@@ -305,6 +314,7 @@ function doLogout() {
 // ===== OAuth 登录 =====
 
 function oauthLogin(provider) {
+    // 直接跳转，后端会返回错误或重定向
     window.location.href = '/api/auth/oauth/' + provider + '?redirect=/';
 }
 
