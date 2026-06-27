@@ -60,6 +60,14 @@ def _load_users():
         try:
             with open(USERS_FILE, 'r', encoding='utf-8') as f:
                 users = json.load(f)
+            # 清除持久化文件中的游客数据（游客仅存内存）
+            dirty = False
+            for uname in list(users.keys()):
+                if users[uname].get('is_guest'):
+                    del users[uname]
+                    dirty = True
+            if dirty:
+                _save_users()
         except (json.JSONDecodeError, IOError):
             users = {}
 
@@ -280,7 +288,7 @@ def api_guest_login():
         'display_name': display_name,
         'is_guest': True,
     }
-    _save_users()
+    # 游客不持久化，仅存在内存中，重启后丢失
 
     token = uuid.uuid4().hex
     sessions[token] = username

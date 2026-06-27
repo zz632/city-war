@@ -25,7 +25,10 @@ COPY start.sh .
 RUN chmod +x start.sh
 
 # 创建数据目录
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data /data
+
+# 声明持久化卷（HF Spaces 会自动挂载 /data 为持久存储）
+VOLUME /data
 
 # Hugging Face Spaces 环境变量
 ENV ONLINE_MODE=1
