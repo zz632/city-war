@@ -37,9 +37,8 @@ function toast(msg, type = 'info') {
 
 // ===== 首页 =====
 function initHome() {
-    // 加载 PoW 挑战（登录区域和游客区域各一个）
+    // 加载 PoW 挑战（登录区域）
     fetchPowChallenge('powContainerLogin');
-    fetchPowChallenge('powContainerGuest');
 
     // 检测是否在线模式
     fetch('/api/auth/online_mode').then(r => r.json()).then(data => {
@@ -200,6 +199,15 @@ async function doLogin() {
     }
 }
 
+function openMoreLoginModal() {
+    document.getElementById('moreLoginModal').style.display = 'flex';
+    fetchPowChallenge('powContainerGuest');
+}
+
+function closeMoreLoginModal() {
+    document.getElementById('moreLoginModal').style.display = 'none';
+}
+
 // ===== Proof of Work =====
 
 async function fetchPowChallenge(containerId) {
@@ -210,7 +218,7 @@ async function fetchPowChallenge(containerId) {
         const data = await res.json();
         powData[containerId] = { challenge_id: data.challenge_id, challenge: data.challenge, difficulty: data.difficulty, nonce: null };
         // 显示计算进度
-        container.innerHTML = '<span class="pow-status">安全验证就绪</span>';
+        container.innerHTML = '<span class="pow-status pow-computing">计算中...</span>';
         // 后台预计算
         solvePowInBackground(containerId);
     } catch (e) {
@@ -234,7 +242,7 @@ function solvePowInBackground(containerId) {
             const hash = sha256(challenge + nonce);
             if (hash.startsWith(prefix)) {
                 data.nonce = String(nonce);
-                if (container) container.innerHTML = '<span class="pow-status pow-done">验证就绪</span>';
+                if (container) container.innerHTML = '<span class="pow-status pow-done">✓ 验证成功</span>';
                 return;
             }
             nonce++;
