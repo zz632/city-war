@@ -35,6 +35,12 @@ init_socket_events(socketio, room_manager)
 
 # ===== 在线模式 & 用户系统 =====
 ONLINE_MODE = os.environ.get('ONLINE_MODE', '').lower() in ('1', 'true', 'yes')
+
+# OAuth 回调地址（必须与 OAuth 应用中配置的完全一致）
+OAUTH_CALLBACK_URL = os.environ.get('OAUTH_CALLBACK_URL', '')
+if not OAUTH_CALLBACK_URL and ONLINE_MODE:
+    # HF Spaces 默认回调地址
+    OAUTH_CALLBACK_URL = 'https://zz632-city-war.hf.space/api/auth/oauth/callback'
 users = {}  # username -> {password_hash, display_name}
 sessions = {}  # session_token -> username
 
@@ -316,7 +322,7 @@ def oauth_redirect(provider):
 
     params = {
         'client_id': cfg['client_id'],
-        'redirect_uri': request.host_url.rstrip('/') + '/api/auth/oauth/callback',
+        'redirect_uri': OAUTH_CALLBACK_URL,
         'response_type': 'code',
         'scope': cfg['scope'],
         'state': state,
@@ -347,7 +353,7 @@ def oauth_callback():
             'client_id': cfg['client_id'],
             'client_secret': cfg['client_secret'],
             'code': code,
-            'redirect_uri': request.host_url.rstrip('/') + '/api/auth/oauth/callback',
+            'redirect_uri': OAUTH_CALLBACK_URL,
             'grant_type': 'authorization_code',
         }).encode()
         headers = {'Accept': 'application/json'}
