@@ -126,6 +126,22 @@ OAUTH_PROVIDERS = {
         'api_url': 'https://discord.com/api/users/@me',
         'scope': 'identify email',
     },
+    'twitch': {
+        'client_id': os.environ.get('TWITCH_CLIENT_ID', ''),
+        'client_secret': os.environ.get('TWITCH_CLIENT_SECRET', ''),
+        'auth_url': 'https://id.twitch.tv/oauth2/authorize',
+        'token_url': 'https://id.twitch.tv/oauth2/token',
+        'api_url': 'https://api.twitch.tv/helix/users',
+        'scope': 'user:read:email',
+    },
+    'gitee': {
+        'client_id': os.environ.get('GITEE_CLIENT_ID', ''),
+        'client_secret': os.environ.get('GITEE_CLIENT_SECRET', ''),
+        'auth_url': 'https://gitee.com/oauth/authorize',
+        'token_url': 'https://gitee.com/oauth/token',
+        'api_url': 'https://gitee.com/api/v5/user',
+        'scope': 'user_info',
+    },
 }
 # OAuth state 存储: state -> {provider, redirect}
 oauth_states = {}
@@ -407,7 +423,10 @@ def oauth_callback():
 
     # 获取用户信息
     try:
-        req = urllib.request.Request(cfg['api_url'], headers={'Authorization': f'Bearer {access_token}'})
+        api_headers = {'Authorization': f'Bearer {access_token}'}
+        if provider == 'twitch':
+            api_headers['Client-Id'] = cfg['client_id']
+        req = urllib.request.Request(cfg['api_url'], headers=api_headers)
         with urllib.request.urlopen(req, timeout=10) as resp:
             user_info = json.loads(resp.read())
     except Exception:
@@ -425,6 +444,18 @@ def oauth_callback():
     elif provider == 'discord':
         oauth_id = str(user_info.get('id', ''))
         display_name = user_info.get('username', '') or user_info.get('global_name', '')
+        email = user_info.get('email', '')
+    elif provider == 'twitch':
+        # Twitch API 返回 {"data": [{...}]}
+        twitch_user = {}
+        if isinstance(user_info.get('data'), list) and user_info['data']:
+            twitch_user = user_info['data'][0]
+        oauth_id = str(twitch_user.get('id', ''))
+        display_name = twitch_user.get('display_name', '') or twitch_user.get('login', '')
+        email = twitch_user.get('email', '')
+    elif provider == 'gitee':
+        oauth_id = str(user_info.get('id', ''))
+        display_name = user_info.get('login', '') or user_info.get('name', '')
         email = user_info.get('email', '')
     else:
         return redirect('/?oauth_error=unknown_provider')

@@ -9,6 +9,7 @@ from game.models import GamePhase
 from game.skills import SKILL_CARDS
 import random
 import threading
+import uuid
 
 # 运行时由 init_socket_events 注入
 socketio = None
@@ -246,14 +247,14 @@ def _register():
         if not player:
             return
 
-        if bid < auction['current_price'] + 10:
+        if bid < auction['current_bid'] + 10:
             _emit('error_msg', {'message': '出价至少比当前价高10'})
             return
         if bid > player.cities:
             _emit('error_msg', {'message': '城池不足'})
             return
 
-        auction['current_price'] = bid
+        auction['current_bid'] = bid
         auction['highest_bidder'] = player_id
 
         _emit('auction_updated', {
@@ -357,9 +358,18 @@ def _register():
                     second.change_cities(-second_damage)
                     result_msg += '，对 ' + second.name + ' 造成 ' + str(second_damage) + ' 伤害'
 
-            # 毒计卡：标记眩晕
+            # 毒计卡：标记眩晕（持续到下一回合结束）
             if effect.get('stun'):
-                target.status_effects['stun'] = True
+                target.status_effects['stun'] = 2  # 持续2个清理周期，确保下回合生效
+                if target_id in room.game_state.actions:
+                    room.game_state.actions[target_id] = {
+                        'player_id': target_id,
+                        'action_type': 'skip',
+                        'target_id': None,
+                        'bet': 0,
+                        'gesture': None,
+                        'timestamp': room.game_state.actions[target_id].get('timestamp', 0)
+                    }
                 result_msg += '，' + target.name + ' 下回合无法行动'
 
         # 防御类 - 自身buff
@@ -481,14 +491,19 @@ def _register():
                 player.status_effects['disguise'] = True
                 result_msg += '，下回合行动将显示为随机行动'
 
-            # 急救卡 - 不需要目标
+            # 急救卡 - 不需要目标，城池数为负时可救命
             elif effect.get('emergency_heal'):
                 heal_amount = effect['emergency_heal']
-                player.change_cities(heal_amount)
-                result_msg += '，紧急恢复 ' + str(heal_amount) + ' 城池'
-                if not player.is_alive and player.cities >= 0:
-                    player.is_alive = True
-                    player.is_spectator = False
+                if player.cities < 0 or not player.is_alive:
+                    player.cities += heal_amount
+                    if player.cities >= 0:
+                        player.is_alive = True
+                        player.is_spectator = False
+                        result_msg += '，紧急恢复 ' + str(heal_amount) + ' 城池，已复活！'
+                    else:
+                        result_msg += '，紧急恢复 ' + str(heal_amount) + ' 城池'
+                else:
+                    result_msg += '，城池数正常，急救卡效果未触发'
 
             else:
                 _emit('error_msg', {'message': '无法使用该技能卡'})
@@ -690,8 +705,10 @@ def _start_auction(room_id):
         _start_next_round(room_id)
         return
 
-    skill = random.choice(list(SKILL_CARDS.values())).copy()
-    skill['id'] = f"auction_{room.game_state.round}"
+    skill_id = random.choice(list(SKILL_CARDS.keys()))
+    skill = SKILL_CARDS[skill_id].copy()
+    skill['id'] = str(uuid.uuid4())
+    skill['skill_type'] = skill_id
     starting_price = max(10, min(p.cities for p in alive) // 4)
 
     room.game_state.auction = {
@@ -754,9 +771,16 @@ def _start_next_round(room_id):
     for p in room.players.values():
         p.repair_active = False
         # 清除单回合状态效果
-        for key in ['stun', 'skip_turn', 'force_attack', 'ignore_defend',
+        for key in ['skip_turn', 'force_attack', 'ignore_defend',
                      'damage_reduction', 'reflect', 'immune', 'untargetable', 'disguise']:
             p.status_effects.pop(key, None)
+        # 眩晕：支持计数器，递减而非直接清除
+        stun = p.status_effects.get('stun')
+        if stun:
+            if isinstance(stun, int) and stun > 1:
+                p.status_effects['stun'] = stun - 1
+            else:
+                p.status_effects.pop('stun', None)
         # 离间效果递减
         blocked = p.status_effects.get('blocked_attack')
         if blocked:
