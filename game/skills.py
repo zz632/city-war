@@ -195,16 +195,25 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
     player = game_state.get_player(player_id)
     if not player:
         return {"success": False, "message": "玩家不存在"}
-    
-    if skill_id not in player.skills:
+
+    # 查找技能卡（兼容 skill_type 和 uuid id）
+    skill_card = None
+    for s in player.skills:
+        if isinstance(s, dict) and (s.get('skill_type') == skill_id or s.get('id') == skill_id):
+            skill_card = s
+            break
+
+    if not skill_card:
         return {"success": False, "message": "玩家没有这张技能卡"}
-    
-    # 移除技能卡
-    player.remove_skill(skill_id)
-    
-    skill = SKILL_CARDS.get(skill_id)
+
+    # 获取技能定义
+    skill_type_key = skill_card.get('skill_type', skill_id)
+    skill = SKILL_CARDS.get(skill_type_key)
     if not skill:
         return {"success": False, "message": "技能卡不存在"}
+
+    # 移除技能卡
+    player.remove_skill(skill_card.get('id', skill_id))
     
     result = {
         "success": True,
@@ -214,8 +223,8 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
         "effects": []
     }
     
-    # 根据技能ID执行不同效果
-    if skill_id == "fire_attack":
+    # 根据技能类型执行不同效果
+    if skill_type_key == "fire_attack":
         # 火攻卡 - 造成30伤害
         if target_id:
             target = game_state.get_player(target_id)
@@ -226,8 +235,8 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
                     "target": target_id,
                     "amount": 30
                 })
-    
-    elif skill_id == "surprise_attack":
+
+    elif skill_type_key == "surprise_attack":
         # 奇袭卡 - 造成20伤害，无视守城
         if target_id:
             target = game_state.get_player(target_id)
@@ -239,8 +248,8 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
                     "amount": 20,
                     "ignore_defense": True
                 })
-    
-    elif skill_id == "crossbow":
+
+    elif skill_type_key == "crossbow":
         # 连弩卡 - 攻击两名玩家
         targets = kwargs.get("targets", [])
         for tid in targets[:2]:
@@ -252,8 +261,8 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
                     "target": tid,
                     "amount": 15
                 })
-    
-    elif skill_id == "siege":
+
+    elif skill_type_key == "siege":
         # 破城卡 - 造成50伤害，自己损失10
         if target_id:
             target = game_state.get_player(target_id)
@@ -269,52 +278,52 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
                     "type": "self_damage",
                     "amount": 10
                 })
-    
-    elif skill_id == "poison":
+
+    elif skill_type_key == "poison":
         # 毒计卡 - 目标下回合无法行动
         if target_id:
             target = game_state.get_player(target_id)
             if target:
-                target.status_effects["poison"] = 1
+                target.status_effects["stun"] = 2  # 与 events.py 一致
                 result["effects"].append({
                     "type": "status",
                     "target": target_id,
-                    "status": "poison"
+                    "status": "stun"
                 })
-    
-    elif skill_id == "iron_wall":
+
+    elif skill_type_key == "iron_wall":
         # 铁壁卡 - 下回合伤害减半
         player.status_effects["iron_wall"] = 1
         result["effects"].append({
             "type": "buff",
             "status": "iron_wall"
         })
-    
-    elif skill_id == "empty_city":
+
+    elif skill_type_key == "empty_city":
         # 空城卡 - 被攻击时攻击方损失20
         player.status_effects["empty_city"] = 1
         result["effects"].append({
             "type": "buff",
             "status": "empty_city"
         })
-    
-    elif skill_id == "reinforcements":
+
+    elif skill_type_key == "reinforcements":
         # 援军卡 - 获得25城池
         player.cities += 25
         result["effects"].append({
             "type": "heal",
             "amount": 25
         })
-    
-    elif skill_id == "feign_surrender":
+
+    elif skill_type_key == "feign_surrender":
         # 诈降卡 - 免疫并反弹
         player.status_effects["feign_surrender"] = 1
         result["effects"].append({
             "type": "buff",
             "status": "feign_surrender"
         })
-    
-    elif skill_id == "relocate":
+
+    elif skill_type_key == "relocate":
         # 迁都卡 - 获得15城池，下回合无法被选中
         player.cities += 15
         player.status_effects["relocate"] = 1
@@ -326,8 +335,8 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
             "type": "buff",
             "status": "relocate"
         })
-    
-    elif skill_id == "farm":
+
+    elif skill_type_key == "farm":
         # 屯田卡 - 3回合每回合+10
         player.status_effects["farm"] = 3
         result["effects"].append({
@@ -335,8 +344,8 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
             "status": "farm",
             "duration": 3
         })
-    
-    elif skill_id == "trade_route":
+
+    elif skill_type_key == "trade_route":
         # 商路卡 - 从其他玩家各获得5城池
         total_gain = 0
         for pid, p in game_state.players.items():
@@ -348,8 +357,8 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
             "type": "heal",
             "amount": total_gain
         })
-    
-    elif skill_id == "tax":
+
+    elif skill_type_key == "tax":
         # 征税卡 - 获得当前20%城池
         gain = int(player.cities * 0.2)
         player.cities += gain
@@ -357,8 +366,8 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
             "type": "heal",
             "amount": gain
         })
-    
-    elif skill_id == "recruit":
+
+    elif skill_type_key == "recruit":
         # 募兵卡 - 获得20城池，下回合必须攻城
         player.cities += 20
         player.status_effects["must_attack"] = 1
@@ -370,8 +379,8 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
             "type": "restriction",
             "restriction": "must_attack"
         })
-    
-    elif skill_id == "harvest":
+
+    elif skill_type_key == "harvest":
         # 丰收卡 - 获得30城池，跳过下回合
         player.cities += 30
         player.status_effects["skip_turn"] = 1
@@ -383,8 +392,8 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
             "type": "restriction",
             "restriction": "skip_turn"
         })
-    
-    elif skill_id == "sow_discord":
+
+    elif skill_type_key == "sow_discord":
         # 离间卡 - 两名玩家无法互相攻击
         targets = kwargs.get("targets", [])
         if len(targets) >= 2:
@@ -397,8 +406,8 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
                 "targets": targets[:2],
                 "status": "discord"
             })
-    
-    elif skill_id == "recon":
+
+    elif skill_type_key == "recon":
         # 侦查卡 - 查看玩家手牌和意图
         if target_id:
             target = game_state.get_player(target_id)
@@ -409,16 +418,16 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
                     "skills": target.skills.copy(),
                     "intention": target.current_action
                 })
-    
-    elif skill_id == "disguise":
+
+    elif skill_type_key == "disguise":
         # 伪装卡 - 行动显示为随机
         player.status_effects["disguise"] = 1
         result["effects"].append({
             "type": "buff",
             "status": "disguise"
         })
-    
-    elif skill_id == "first_aid":
+
+    elif skill_type_key == "first_aid":
         # 急救卡 - 救命用
         if player.cities < 0:
             player.cities = 20
@@ -431,8 +440,8 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
                 "type": "message",
                 "message": "城池数不为负，急救卡无效"
             })
-    
-    elif skill_id == "reverse":
+
+    elif skill_type_key == "reverse":
         # 逆转卡 - 交换城池数
         if target_id:
             target = game_state.get_player(target_id)
