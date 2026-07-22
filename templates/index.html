@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>城池战争</title>
-    <link rel="stylesheet" href="/static/css/main.css?v=13">
+    <link rel="stylesheet" href="/static/css/main.css?v=15">
 </head>
 <body data-page="home">
     <div class="page-wrap">
@@ -105,7 +105,7 @@
             <div id="logged-in-info" class="logged-in-info" style="display:none">
                 <span id="logged-in-name"></span>
                 <div class="logged-in-actions">
-                    <button id="settingsBtn" class="btn-logout" title="账号设置">设置</button>
+                    <button id="accountSettingsBtn" class="btn-logout" title="设置" onclick="window.location.href='/settings'">设置</button>
                     <button id="logoutBtn" class="btn-logout" title="退出登录">退出</button>
                 </div>
             </div>
@@ -144,54 +144,6 @@
                 <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
                 15-30分钟
             </span>
-        </div>
-    </div>
-
-    <!-- 账号设置模态框 -->
-    <div id="profileModal" class="modal-overlay" style="display:none">
-        <div class="modal-card" style="max-width:400px">
-            <div class="modal-title">账号设置</div>
-            <div id="profileInfo" class="profile-info"></div>
-            <div class="field">
-                <label class="field-label"><span>昵称</span></label>
-                <input type="text" id="profileDisplayName" class="field-input" placeholder="新昵称" maxlength="12" autocomplete="off">
-            </div>
-            <div id="profilePasswordSection">
-                <div class="field">
-                    <label class="field-label"><span>旧密码</span></label>
-                    <div class="field-input-wrap">
-                        <input type="password" id="profileOldPassword" class="field-input field-input-pw" placeholder="输入旧密码" autocomplete="off">
-                        <button class="pw-toggle" onclick="togglePw('profileOldPassword', this)" title="显示/隐藏密码">
-                            <svg class="pw-eye-open" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                            <svg class="pw-eye-closed" viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-                        </button>
-                    </div>
-                </div>
-                <div class="field">
-                    <label class="field-label"><span>新密码</span></label>
-                    <div class="field-input-wrap">
-                        <input type="password" id="profileNewPassword" class="field-input field-input-pw" placeholder="输入新密码（留空不改）" autocomplete="off">
-                        <button class="pw-toggle" onclick="togglePw('profileNewPassword', this)" title="显示/隐藏密码">
-                            <svg class="pw-eye-open" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                            <svg class="pw-eye-closed" viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-                        </button>
-                    </div>
-                </div>
-                <div class="field">
-                    <label class="field-label"><span>确认新密码</span></label>
-                    <div class="field-input-wrap">
-                        <input type="password" id="profileNewPasswordConfirm" class="field-input field-input-pw" placeholder="再输入一次新密码" autocomplete="off">
-                        <button class="pw-toggle" onclick="togglePw('profileNewPasswordConfirm', this)" title="显示/隐藏密码">
-                            <svg class="pw-eye-open" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                            <svg class="pw-eye-closed" viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-                        </button>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-btns">
-                <button class="btn btn-secondary" onclick="closeProfileModal()">取消</button>
-                <button class="btn btn-primary" onclick="saveProfile()">保存</button>
-            </div>
         </div>
     </div>
 
@@ -242,7 +194,7 @@
         </div>
     </div>
 
-    <script src="/static/js/settings.js?v=14"></script>
-    <script src="/static/js/main.js?v=9"></script>
+    <script src="/static/js/settings.js?v=16"></script>
+    <script src="/static/js/main.js?v=10"></script>
 </body>
 </html>

@@ -89,9 +89,6 @@ function initHome() {
     // 退出登录
     document.getElementById('logoutBtn').addEventListener('click', doLogout);
 
-    // 账号设置
-    document.getElementById('settingsBtn').addEventListener('click', openProfileModal);
-
     // 游客模式
     document.getElementById('guestBtn').addEventListener('click', doGuestLogin);
     document.getElementById('guestName').addEventListener('keypress', e => { if (e.key === 'Enter') doGuestLogin(); });
@@ -389,75 +386,7 @@ function oauthLogin(provider) {
     window.location.href = '/api/auth/oauth/' + provider + '?redirect=/';
 }
 
-// ===== 账号设置 =====
-
-async function openProfileModal() {
-    const modal = document.getElementById('profileModal');
-    modal.style.display = 'flex';
-    try {
-        const res = await fetch('/api/auth/profile', { headers: authHeaders() });
-        const data = await res.json();
-        if (data.success) {
-            document.getElementById('profileDisplayName').value = data.display_name || '';
-            document.getElementById('profileInfo').innerHTML =
-                '<div class="profile-row"><span class="profile-label">用户名</span><span>' + data.username + '</span></div>' +
-                (data.email ? '<div class="profile-row"><span class="profile-label">邮箱</span><span>' + data.email + '</span></div>' : '') +
-                (data.oauth_provider ? '<div class="profile-row"><span class="profile-label">登录方式</span><span>' + data.oauth_provider.toUpperCase() + '</span></div>' : '') +
-                (data.is_guest ? '<div class="profile-row"><span class="profile-label">账号类型</span><span>游客</span></div>' : '');
-            // OAuth 账号和游客不显示密码修改
-            document.getElementById('profilePasswordSection').style.display =
-                (data.is_guest || data.oauth_provider) ? 'none' : 'block';
-        } else {
-            toast(data.message || '获取信息失败', 'error');
-            modal.style.display = 'none';
-        }
-    } catch (e) {
-        toast('网络错误', 'error');
-        modal.style.display = 'none';
-    }
-}
-
-function closeProfileModal() {
-    document.getElementById('profileModal').style.display = 'none';
-}
-
-async function saveProfile() {
-    const display_name = document.getElementById('profileDisplayName').value.trim();
-    const old_password = document.getElementById('profileOldPassword').value;
-    const new_password = document.getElementById('profileNewPassword').value;
-    const new_password_confirm = document.getElementById('profileNewPasswordConfirm').value;
-
-    if (new_password && new_password !== new_password_confirm) {
-        toast('两次输入的新密码不一致', 'error');
-        return;
-    }
-
-    try {
-        const body = { display_name };
-        if (new_password) {
-            body.old_password = old_password;
-            body.new_password = new_password;
-        }
-        const res = await fetch('/api/auth/profile', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...authHeaders() },
-            body: JSON.stringify(body)
-        });
-        const data = await res.json();
-        if (data.success) {
-            toast('修改成功', 'success');
-            if (data.display_name) {
-                loggedInDisplayName = data.display_name;
-                document.getElementById('logged-in-name').textContent = loggedInDisplayName;
-            }
-            closeProfileModal();
-        } else {
-            toast(data.message || '修改失败', 'error');
-        }
-    } catch (e) {
-        toast('网络错误', 'error');
-    }
-}
+// ===== 房间操作 =====
 
 async function createRoom(name) {
     try {

@@ -749,6 +749,11 @@ def game(room_id):
     return render_template('game.html', room_id=room_id)
 
 
+@app.route('/settings')
+def settings_page():
+    return render_template('settings.html')
+
+
 @app.route('/api/rooms', methods=['GET', 'POST'])
 def api_rooms():
     if request.method == 'GET':
