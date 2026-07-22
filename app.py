@@ -13,6 +13,9 @@ import json
 import functools
 import urllib.request
 import urllib.parse
+from datetime import datetime, timezone
+import bcrypt
+import pymongo
 from flask import Flask, render_template, request, jsonify, make_response, redirect, url_for
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
@@ -41,11 +44,16 @@ OAUTH_CALLBACK_URL = os.environ.get('OAUTH_CALLBACK_URL', '')
 if not OAUTH_CALLBACK_URL and ONLINE_MODE:
     # HF Spaces 默认回调地址
     OAUTH_CALLBACK_URL = 'https://zz632-city-war.hf.space/api/auth/oauth/callback'
-users = {}  # username -> {password_hash, display_name}
+users = {}  # username -> {password_hash, display_name, ...} (内存缓存)
 sessions = {}  # session_token -> username
 
 # ===== 用户数据持久化 =====
-# HF Spaces 持久化目录为 /data，本地运行为项目目录下的 data/
+MONGODB_URI = os.environ.get('MONGODB_URI', '')
+_mongo_client = None
+_mongo_db = None
+_mongo_users = None  # MongoDB collection
+
+# 本地 JSON 文件路径（fallback）
 if os.path.exists('/data') and os.access('/data', os.W_OK):
     DATA_DIR = '/data'
 else:
@@ -53,27 +61,69 @@ else:
 USERS_FILE = os.path.join(DATA_DIR, 'users.json')
 
 
+def _use_mongodb():
+    """判断是否使用 MongoDB"""
+    return MONGODB_URI and _mongo_users is not None
+
+
+def _init_mongodb():
+    """初始化 MongoDB 连接"""
+    global _mongo_client, _mongo_db, _mongo_users
+    if not MONGODB_URI:
+        return
+    try:
+        _mongo_client = pymongo.MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
+        # 测试连接
+        _mongo_client.admin.command('ping')
+        _mongo_db = _mongo_client['citywar']
+        _mongo_users = _mongo_db['users']
+        # 确保 username 字段有唯一索引
+        _mongo_users.create_index('username', unique=True)
+        print('[MongoDB] 连接成功')
+    except Exception as e:
+        print(f'[MongoDB] 连接失败，回退到本地 JSON: {e}')
+        _mongo_client = None
+        _mongo_db = None
+        _mongo_users = None
+
+
 def _load_users():
-    """启动时从 data/users.json 加载用户数据"""
+    """启动时加载用户数据（从 MongoDB 或本地 JSON）"""
     global users
-    if os.path.exists(USERS_FILE):
-        try:
-            with open(USERS_FILE, 'r', encoding='utf-8') as f:
-                users = json.load(f)
-            # 清除持久化文件中的游客数据（游客仅存内存）
-            dirty = False
-            for uname in list(users.keys()):
-                if users[uname].get('is_guest'):
-                    del users[uname]
-                    dirty = True
-            if dirty:
-                _save_users()
-        except (json.JSONDecodeError, IOError):
-            users = {}
+    if _use_mongodb():
+        # 从 MongoDB 加载
+        users = {}
+        for doc in _mongo_users.find():
+            uname = doc.get('username')
+            if uname:
+                users[uname] = {k: v for k, v in doc.items() if k != '_id' and k != 'username'}
+        # 清除游客数据
+        for uname in list(users.keys()):
+            if users[uname].get('is_guest'):
+                _mongo_users.delete_one({'username': uname})
+                del users[uname]
+    else:
+        # 从本地 JSON 文件加载
+        if os.path.exists(USERS_FILE):
+            try:
+                with open(USERS_FILE, 'r', encoding='utf-8') as f:
+                    users = json.load(f)
+                # 清除游客数据
+                dirty = False
+                for uname in list(users.keys()):
+                    if users[uname].get('is_guest'):
+                        del users[uname]
+                        dirty = True
+                if dirty:
+                    _save_users()
+            except (json.JSONDecodeError, IOError):
+                users = {}
 
 
 def _save_users():
-    """用户数据变更时自动保存到 data/users.json"""
+    """保存用户数据到本地 JSON（仅在非 MongoDB 模式下使用）"""
+    if _use_mongodb():
+        return  # MongoDB 模式下通过单独操作写入，不需要全量保存
     os.makedirs(DATA_DIR, exist_ok=True)
     try:
         with open(USERS_FILE, 'w', encoding='utf-8') as f:
@@ -82,12 +132,36 @@ def _save_users():
         pass
 
 
-# 启动时加载用户数据
+def _mongo_upsert_user(username, user_data):
+    """向 MongoDB 插入或更新单个用户"""
+    if not _use_mongodb():
+        return
+    doc = {'username': username}
+    doc.update(user_data)
+    _mongo_users.replace_one({'username': username}, doc, upsert=True)
+
+
+def _mongo_delete_user(username):
+    """从 MongoDB 删除单个用户"""
+    if not _use_mongodb():
+        return
+    _mongo_users.delete_one({'username': username})
+
+
+def _mongo_update_field(username, field, value):
+    """更新 MongoDB 中用户的单个字段"""
+    if not _use_mongodb():
+        return
+    _mongo_users.update_one({'username': username}, {'$set': {field: value}})
+
+
+# 初始化 MongoDB 并加载用户数据
+_init_mongodb()
 _load_users()
 
 # ===== 管理员配置 =====
 ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'zz632')
-ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'Qiqi130102')
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '')
 admin_sessions = {}  # admin_token -> True
 
 # ===== Proof of Work 验证 =====
@@ -183,7 +257,26 @@ def verify_pow(challenge_id, nonce):
 
 
 def _hash_password(password):
-    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+    """使用 bcrypt 对密码进行哈希"""
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+
+def _check_password(password, stored_hash):
+    """验证密码，支持 bcrypt 和旧 SHA-256 自动迁移"""
+    if not stored_hash:
+        return False
+    # bcrypt 哈希以 $2b$ 开头
+    if stored_hash.startswith('$2b$') or stored_hash.startswith('$2a$') or stored_hash.startswith('$2y$'):
+        try:
+            return bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8'))
+        except Exception:
+            return False
+    else:
+        # 旧 SHA-256 哈希：验证后自动升级为 bcrypt
+        sha256_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
+        if sha256_hash == stored_hash:
+            return True  # 调用方负责升级哈希
+        return False
 
 
 def _check_login():
@@ -261,7 +354,11 @@ def api_register():
     users[username] = {
         'password_hash': _hash_password(password),
         'display_name': display_name,
+        'auth_method': 'password',
+        'is_guest': False,
+        'created_at': datetime.now(timezone.utc).isoformat(),
     }
+    _mongo_upsert_user(username, users[username])
     _save_users()
     # 自动登录
     token = uuid.uuid4().hex
@@ -287,8 +384,15 @@ def api_login():
         return jsonify({'success': False, 'message': '验证失败，请重试'}), 403
 
     user = users.get(username)
-    if not user or user['password_hash'] != _hash_password(password):
+    if not user or not _check_password(password, user.get('password_hash', '')):
         return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
+
+    # SHA-256 迁移到 bcrypt：如果哈希不是 bcrypt 格式，升级它
+    stored_hash = user.get('password_hash', '')
+    if stored_hash and not stored_hash.startswith('$2b$') and not stored_hash.startswith('$2a$') and not stored_hash.startswith('$2y$'):
+        user['password_hash'] = _hash_password(password)
+        _mongo_update_field(username, 'password_hash', user['password_hash'])
+        _save_users()
 
     token = uuid.uuid4().hex
     sessions[token] = username
@@ -322,6 +426,8 @@ def api_guest_login():
         'password_hash': '',
         'display_name': display_name,
         'is_guest': True,
+        'auth_method': 'guest',
+        'created_at': datetime.now(timezone.utc).isoformat(),
     }
     # 游客不持久化，仅存在内存中，重启后丢失
 
@@ -484,10 +590,14 @@ def _oauth_login_or_register(provider, oauth_id, display_name, email, redirect_t
         users[username] = {
             'password_hash': '',
             'display_name': display_name,
+            'auth_method': provider,
             'oauth_id': oauth_key,
             'oauth_provider': provider,
             'email': email,
+            'is_guest': False,
+            'created_at': datetime.now(timezone.utc).isoformat(),
         }
+        _mongo_upsert_user(username, users[username])
         _save_users()
 
     token = uuid.uuid4().hex
@@ -544,16 +654,18 @@ def api_update_profile():
 
     if display_name:
         u['display_name'] = display_name
+        _mongo_update_field(username, 'display_name', display_name)
         _save_users()
 
     if new_password:
         if not old_password:
             return jsonify({'success': False, 'message': '请输入旧密码'}), 400
-        if u.get('password_hash') and u['password_hash'] != _hash_password(old_password):
+        if u.get('password_hash') and not _check_password(old_password, u['password_hash']):
             return jsonify({'success': False, 'message': '旧密码错误'}), 400
         if len(new_password) < 4:
             return jsonify({'success': False, 'message': '新密码至少4个字符'}), 400
         u['password_hash'] = _hash_password(new_password)
+        _mongo_update_field(username, 'password_hash', u['password_hash'])
         _save_users()
 
     return jsonify({'success': True, 'message': '修改成功', 'display_name': u['display_name']})
@@ -710,7 +822,7 @@ def admin_login_submit():
     username = data.get('username', '')
     password = data.get('password', '')
 
-    if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+    if username == ADMIN_USERNAME and ADMIN_PASSWORD and password == ADMIN_PASSWORD:
         admin_token = uuid.uuid4().hex
         admin_sessions[admin_token] = True
         resp = make_response(jsonify({'success': True}))
@@ -766,6 +878,7 @@ def admin_delete_user(username):
     for t in tokens_to_remove:
         del sessions[t]
     del users[username]
+    _mongo_delete_user(username)
     _save_users()
     return jsonify({'success': True, 'message': f'用户 {username} 已删除'})
 

@@ -14,6 +14,18 @@ let isOnlineMode = false;
 let loggedInDisplayName = '';
 let powData = {};  // containerId -> {challenge_id, challenge, difficulty, nonce}
 
+// 密码显示/隐藏切换
+function togglePw(inputId, btn) {
+    const input = document.getElementById(inputId);
+    if (input.type === 'password') {
+        input.type = 'text';
+        btn.classList.add('showing');
+    } else {
+        input.type = 'password';
+        btn.classList.remove('showing');
+    }
+}
+
 function authHeaders() {
     return authToken ? { 'Authorization': 'Bearer ' + authToken } : {};
 }
@@ -37,15 +49,20 @@ function toast(msg, type = 'info') {
 
 // ===== 首页 =====
 function initHome() {
-    // 加载 PoW 挑战（登录区域）
-    fetchPowChallenge('powContainerLogin');
-
     // 检测是否在线模式
     fetch('/api/auth/online_mode').then(r => r.json()).then(data => {
         isOnlineMode = data.online;
-        checkExistingLogin();
+        if (isOnlineMode) {
+            // 在线模式：加载 PoW + 检查登录
+            fetchPowChallenge('powContainerLogin');
+            checkExistingLogin();
+        } else {
+            // 本地模式：跳过登录，直接进入游戏
+            showGameSection();
+        }
     }).catch(() => {
-        showAuthSection();
+        // 检测失败，默认按本地模式处理
+        showGameSection();
     });
 
     // 登录/注册切换
@@ -236,10 +253,10 @@ function solvePowInBackground(containerId) {
     const challenge = data.challenge;
     let nonce = 0;
 
-    function step() {
-        const batch = 5000;
-        for (let i = 0; i < batch; i++) {
-            const hash = sha256(challenge + nonce);
+    async function step() {
+        const batchSize = 500;
+        for (let i = 0; i < batchSize; i++) {
+            const hash = await sha256Async(challenge + String(nonce));
             if (hash.startsWith(prefix)) {
                 data.nonce = String(nonce);
                 if (container) container.innerHTML = '<span class="pow-status pow-done">✓ 验证成功</span>';
@@ -287,77 +304,13 @@ async function solvePow(containerId) {
     });
 }
 
-// SHA-256（纯JS实现，无外部依赖）
-function sha256(str) {
-    // 使用 SubtleCrypto API（浏览器原生）
-    // 同步版本用简单实现
-    if (sha256._sync) return sha256._sync(str);
-    // 降级：用内联的简易SHA256
-    return sha256Simple(str);
-}
-
-// 简易同步 SHA-256 实现
-function sha256Simple(str) {
-    const K = [
-        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
-        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
-        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x10e8270c,0x27b70a85,0x3c5ef3a6,0x455a14ed,0x56b2a05b,
-        0x682bb8b3,0x7eb8c6d1,0x90bf8e8a,0xa1d1937e,0x3de87e0b,0x17f6be88,0x1929f5d5,0x1e376c08,
-        0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,
-        0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
-    ];
-    function rotr(x, n) { return (x >>> n) | (x << (32 - n)); }
-    function ch(x, y, z) { return (x & y) ^ (~x & z); }
-    function maj(x, y, z) { return (x & y) ^ (x & z) ^ (y & z); }
-    function ep0(x) { return rotr(x, 2) ^ rotr(x, 13) ^ rotr(x, 22); }
-    function ep1(x) { return rotr(x, 6) ^ rotr(x, 11) ^ rotr(x, 25); }
-    function sig0(x) { return rotr(x, 7) ^ rotr(x, 18) ^ (x >>> 3); }
-    function sig1(x) { return rotr(x, 17) ^ rotr(x, 19) ^ (x >>> 10); }
-
-    // 编码为UTF-8字节
-    const bytes = new TextEncoder().encode(str);
-    const len = bytes.length;
-
-    // 填充
-    const bitLen = len * 8;
-    const padLen = ((56 - (len + 1) % 64) + 64) % 64;
-    const totalLen = len + 1 + padLen + 8;
-    const msg = new Uint8Array(totalLen);
-    msg.set(bytes);
-    msg[len] = 0x80;
-    const view = new DataView(msg.buffer);
-    view.setUint32(totalLen - 4, bitLen, false);
-    view.setUint32(totalLen - 8, 0, false);
-
-    // 初始哈希值
-    let h0=0x6a09e667, h1=0xbb67ae85, h2=0x3c6ef372, h3=0xa54ff53a;
-    let h4=0x510e527f, h5=0x9b05688c, h6=0x1f83d9ab, h7=0x5be0cd19;
-
-    // 处理每个512-bit块
-    for (let offset = 0; offset < totalLen; offset += 64) {
-        const w = new Uint32Array(64);
-        for (let i = 0; i < 16; i++) {
-            w[i] = view.getUint32(offset + i * 4, false);
-        }
-        for (let i = 16; i < 64; i++) {
-            w[i] = (sig1(w[i-2]) + w[i-7] + sig0(w[i-15]) + w[i-16]) | 0;
-        }
-
-        let a=h0, b=h1, c=h2, d=h3, e=h4, f=h5, g=h6, hh=h7;
-        for (let i = 0; i < 64; i++) {
-            const t1 = (hh + ep1(e) + ch(e, f, g) + K[i] + w[i]) | 0;
-            const t2 = (ep0(a) + maj(a, b, c)) | 0;
-            hh = g; g = f; f = e; e = (d + t1) | 0;
-            d = c; c = b; b = a; a = (t1 + t2) | 0;
-        }
-        h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0;
-        h4 = (h4 + e) | 0; h5 = (h5 + f) | 0; h6 = (h6 + g) | 0; h7 = (h7 + hh) | 0;
-    }
-
-    // 输出十六进制
-    const hex = [h0, h1, h2, h3, h4, h5, h6, h7].map(v =>
-        (v >>> 0).toString(16).padStart(8, '0')
-    ).join('');
+// SHA-256 - 使用浏览器原生 crypto.subtle.digest（异步，结果正确可靠）
+async function sha256Async(str) {
+    const data = new TextEncoder().encode(str);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = new Uint8Array(hashBuffer);
+    let hex = '';
+    for (let i = 0; i < hashArray.length; i++) hex += hashArray[i].toString(16).padStart(2, '0');
     return hex;
 }
 
@@ -365,7 +318,9 @@ async function doRegister() {
     const username = document.getElementById('regUsername').value.trim();
     const display_name = document.getElementById('regDisplayName').value.trim();
     const password = document.getElementById('regPassword').value;
+    const passwordConfirm = document.getElementById('regPasswordConfirm').value;
     if (!username || !password) { toast('请填写用户名和密码', 'error'); return; }
+    if (password !== passwordConfirm) { toast('两次输入的密码不一致', 'error'); return; }
 
     const pow = await solvePow('powContainer');
     if (!pow) { toast('验证计算中，请稍候', 'error'); return; }
@@ -470,6 +425,12 @@ async function saveProfile() {
     const display_name = document.getElementById('profileDisplayName').value.trim();
     const old_password = document.getElementById('profileOldPassword').value;
     const new_password = document.getElementById('profileNewPassword').value;
+    const new_password_confirm = document.getElementById('profileNewPasswordConfirm').value;
+
+    if (new_password && new_password !== new_password_confirm) {
+        toast('两次输入的新密码不一致', 'error');
+        return;
+    }
 
     try {
         const body = { display_name };

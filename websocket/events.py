@@ -39,10 +39,17 @@ def _register():
     @socketio.on('disconnect')
     def on_disconnect():
         print(f'[WS] 断开: {request.sid}')
-        # 清理 IP 映射（如果玩家断开但没主动离开）
         player_id = ws_player_map.pop(request.sid, None)
-        if player_id and room_manager.get_player(player_id):
-            room_manager.leave_room(player_id)
+        if not player_id:
+            return
+        player = room_manager.get_player(player_id)
+        if not player:
+            return
+        # 游戏进行中不移除玩家，等待重新连接
+        room = room_manager.get_room(player.room_id)
+        if room and room.game_state and room.game_state.phase != GamePhase.WAITING:
+            return
+        room_manager.leave_room(player_id)
 
     # ---- 大厅 ----
 

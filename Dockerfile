@@ -2,8 +2,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# 安装 nginx
-RUN apt-get update && apt-get install -y --no-install-recommends nginx && \
+# 安装 nginx 和构建依赖（bcrypt/pymongo C 扩展需要）
+RUN apt-get update && apt-get install -y --no-install-recommends nginx gcc python3-dev && \
     rm -rf /var/lib/apt/lists/*
 
 # 复制 nginx 配置
