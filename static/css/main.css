@@ -534,35 +534,6 @@ body {
 .settings-btn:hover { background: var(--surface-hover); transform: scale(1.05); }
 .settings-btn svg { width: 18px; height: 18px; stroke: var(--text-secondary); fill: none; stroke-width: 1.6; }
 
-.settings-sheet {
-    position: fixed; bottom: 0; left: 0; right: 0; z-index: 1001;
-    background: var(--surface);
-    border-top: 1px solid var(--border);
-    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-    padding: 12px 20px 34px;
-    box-shadow: var(--shadow-xl);
-    animation: sheetSlideUp .35s cubic-bezier(.22,1,.36,1);
-    max-height: 70vh; overflow-y: auto;
-}
-@keyframes sheetSlideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
-
-.settings-handle { width: 36px; height: 5px; border-radius: 3px; background: var(--border-strong); margin: 0 auto 14px; }
-.settings-title { font-size: 20px; font-weight: 700; text-align: center; margin-bottom: 18px; color: var(--text); }
-.settings-group { margin-bottom: 16px; }
-.settings-group-label { font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; padding-left: 4px; }
-.settings-group-row {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 14px;
-    background: var(--surface-hover);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm); margin-bottom: 1px;
-}
-.settings-group-row:first-of-type { border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
-.settings-group-row:last-of-type { border-radius: 0 0 var(--radius-sm) var(--radius-sm); margin-bottom: 0; }
-.settings-group-row:only-of-type { border-radius: var(--radius-sm); }
-.settings-row-label { font-size: 15px; font-weight: 400; color: var(--text); }
-.settings-row-value { display: flex; align-items: center; gap: 6px; }
-
 .color-dot {
     width: 28px; height: 28px; border-radius: 50%;
     cursor: pointer; transition: all var(--transition-fast);
@@ -591,14 +562,6 @@ body {
     cursor: pointer; transition: all var(--transition-fast);
 }
 .upload-btn:hover { background: var(--surface-hover); }
-
-.settings-overlay {
-    position: fixed; inset: 0;
-    background: rgba(0,0,0,.15);
-    backdrop-filter: blur(4px);
-    z-index: 1000;
-    animation: fadeIn .2s ease;
-}
 
 /* 滚动条 */
 ::-webkit-scrollbar { width: 5px; }
