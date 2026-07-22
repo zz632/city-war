@@ -134,206 +134,93 @@ CONNECT_HTML = '''<!DOCTYPE html>
 <title>城池战争</title>
 <style>
 :root {
-    --bg: #0c1222;
-    --bg-card: #151d30;
-    --bg-input: #1a2540;
-    --border: #243050;
-    --text: #e8ecf4;
-    --text-dim: #7a8baa;
-    --primary: #3b82f6;
-    --primary-hover: #2563eb;
-    --radius: 10px;
+    --bg: #F5F5F7;
+    --surface: #FFFFFF;
+    --surface-hover: #F8F8FA;
+    --border: rgba(0,0,0,0.08);
+    --border-strong: rgba(0,0,0,0.15);
+    --text: #1D1D1F;
+    --text-secondary: #6E6E73;
+    --text-tertiary: #AEAEB2;
+    --primary: #007AFF;
+    --primary-hover: #0062CC;
+    --shadow: 0 2px 8px rgba(0,0,0,0.06), 0 0 1px rgba(0,0,0,0.04);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.08), 0 0 1px rgba(0,0,0,0.06);
+    --radius: 12px;
+    --radius-sm: 8px;
+    --radius-lg: 16px;
+    --radius-xl: 20px;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    line-height: 1.5;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', 'PingFang SC', sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.47;
+    -webkit-font-smoothing: antialiased;
 }
-.page-wrap {
-    max-width: 520px;
-    margin: 0 auto;
-    padding: 40px 20px;
-}
-.home-header {
-    text-align: center;
-    margin-bottom: 40px;
-}
-.home-header .logo-icon {
-    width: 40px;
-    height: 40px;
-    stroke: var(--primary);
-    fill: none;
-    stroke-width: 1.5;
-    margin-bottom: 16px;
-}
-.page-title {
-    font-size: 28px;
-    font-weight: 700;
-    text-align: center;
-    margin-bottom: 6px;
-    letter-spacing: 2px;
-}
-.page-subtitle {
-    font-size: 13px;
-    color: var(--text-dim);
-    text-align: center;
-    margin-bottom: 36px;
-    letter-spacing: 4px;
-    text-transform: uppercase;
-}
+.page-wrap { max-width: 480px; margin: 0 auto; padding: 60px 20px 40px; }
+.home-header { text-align: center; margin-bottom: 36px; }
+.home-header .logo-icon { width: 48px; height: 48px; stroke: var(--primary); fill: none; stroke-width: 1.3; margin-bottom: 14px; }
+.page-title { font-size: 32px; font-weight: 700; text-align: center; margin-bottom: 4px; letter-spacing: -.3px; }
+.page-subtitle { font-size: 13px; color: var(--text-tertiary); text-align: center; margin-bottom: 32px; letter-spacing: 2px; text-transform: uppercase; }
+
 .card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 28px;
-    margin-bottom: 20px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); padding: 24px; margin-bottom: 16px;
+    box-shadow: var(--shadow);
 }
-.field { margin-bottom: 16px; }
-.field-label {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-dim);
-    margin-bottom: 6px;
-}
-.field-label svg {
-    width: 14px;
-    height: 14px;
-    stroke: currentColor;
-    fill: none;
-    stroke-width: 2;
-    flex-shrink: 0;
-}
+
+.field { margin-bottom: 14px; }
+.field-label { display: flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 500; color: var(--text-secondary); margin-bottom: 5px; }
+.field-label svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.8; flex-shrink: 0; }
 .field-input {
-    width: 100%;
-    padding: 10px 14px;
-    background: var(--bg-input);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    color: var(--text);
-    font-size: 15px;
-    outline: none;
-    transition: border-color .2s;
+    width: 100%; padding: 11px 14px;
+    background: var(--surface); border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm); color: var(--text); font-size: 16px; outline: none;
+    transition: all .15s;
 }
-.field-input::placeholder { color: #4a5a78; }
-.field-input:focus { border-color: var(--primary); }
+.field-input::placeholder { color: var(--text-tertiary); }
+.field-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(0,122,255,.15); }
+
 .btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    padding: 10px 20px;
-    border: none;
-    border-radius: 8px;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all .15s;
-    white-space: nowrap;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 11px 22px; border: none; border-radius: var(--radius-sm);
+    font-size: 16px; font-weight: 600; cursor: pointer; transition: all .15s; white-space: nowrap;
 }
-.btn svg {
-    width: 16px;
-    height: 16px;
-    stroke: currentColor;
-    fill: none;
-    stroke-width: 2;
-    flex-shrink: 0;
-}
-.btn-primary {
-    background: var(--primary);
-    color: #fff;
-}
+.btn:active { transform: scale(.97); }
+.btn svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; flex-shrink: 0; }
+.btn-primary { background: var(--primary); color: #fff; box-shadow: 0 1px 3px rgba(0,122,255,.25); }
 .btn-primary:hover { background: var(--primary-hover); }
-.btn-secondary {
-    background: transparent;
-    color: var(--primary);
-    border: 1px solid var(--primary);
-}
-.btn-secondary:hover { background: rgba(59,130,246,.1); }
 .btn-block { width: 100%; }
-.btn-lg { padding: 12px 24px; font-size: 15px; }
+.btn-lg { padding: 14px 28px; font-size: 17px; border-radius: var(--radius); }
+
 .mode-btn {
-    width: 100%;
-    padding: 20px;
-    background: var(--bg-input);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    color: var(--text);
-    cursor: pointer;
-    transition: all .15s;
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    font-size: 15px;
-    font-weight: 600;
+    width: 100%; padding: 18px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text); cursor: pointer;
+    transition: all .15s; display: flex; align-items: center; gap: 14px;
+    font-size: 16px; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.04);
 }
-.mode-btn svg {
-    width: 28px;
-    height: 28px;
-    stroke: var(--primary);
-    fill: none;
-    stroke-width: 1.5;
-    flex-shrink: 0;
-}
-.mode-btn:hover { border-color: var(--primary); background: rgba(59,130,246,.06); }
-.mode-btn + .mode-btn { margin-top: 12px; }
+.mode-btn svg { width: 26px; height: 26px; stroke: var(--primary); fill: none; stroke-width: 1.5; flex-shrink: 0; }
 .mode-btn-text { text-align: left; }
-.mode-btn-desc { font-size: 12px; font-weight: 400; color: var(--text-dim); margin-top: 2px; }
-#status {
-    color: var(--primary);
-    font-size: 13px;
-    margin-top: 12px;
-    min-height: 20px;
-    text-align: center;
-}
-.online-tip {
-    text-align: center;
-    padding: 12px;
-    background: rgba(59,130,246,.08);
-    border: 1px solid rgba(59,130,246,.2);
-    border-radius: 8px;
-    color: var(--text-dim);
-    font-size: 13px;
-    margin-bottom: 16px;
-    display: none;
-}
+.mode-btn-desc { font-size: 12px; font-weight: 400; color: var(--text-secondary); margin-top: 2px; }
+.mode-btn:hover { background: var(--surface-hover); border-color: var(--border-strong); }
+.mode-btn + .mode-btn { margin-top: 10px; }
+#status { color: var(--primary); font-size: 13px; margin-top: 12px; min-height: 20px; text-align: center; }
+
 .page-section { display: none; }
 .page-section.active { display: block; }
 .back-btn {
-    position: absolute;
-    top: 12px;
-    left: 12px;
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    color: var(--text-dim);
-    transition: all .15s;
-    padding: 0;
+    position: absolute; top: 12px; left: 12px; width: 34px; height: 34px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--surface-hover); border: none; border-radius: 10px;
+    cursor: pointer; color: var(--text-secondary); transition: all .15s; padding: 0;
 }
-.back-btn svg {
-    width: 20px;
-    height: 20px;
-    stroke: currentColor;
-    fill: none;
-    stroke-width: 2;
-}
-.back-btn:hover { color: var(--text); background: rgba(255,255,255,.06); }
+.back-btn svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 2; }
+.back-btn:hover { color: var(--text); background: var(--border-strong); }
 </style>
 </head>
 <body>
 <div class="page-wrap">
-
-    <!-- 标题 -->
     <div class="home-header">
         <svg class="logo-icon" viewBox="0 0 24 24">
             <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6a2 2 0 012-2h2a2 2 0 012 2v6"/>
@@ -341,29 +228,18 @@ body {
         <div class="page-title">城池战争</div>
         <div class="page-subtitle">CityWar</div>
     </div>
-
-    <!-- 页面1：模式选择 -->
     <div id="page-mode" class="page-section active">
         <div class="card">
-            <div id="online-tip" class="online-tip" style="display:none">正在连接在线服务器...</div>
             <button class="mode-btn" onclick="window.pywebview.api.select_online()">
                 <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z"/></svg>
-                <div class="mode-btn-text">
-                    在线游戏
-                    <div class="mode-btn-desc">连接远程服务器，与全网玩家对战</div>
-                </div>
+                <div class="mode-btn-text">在线游戏<div class="mode-btn-desc">连接远程服务器，与全网玩家对战</div></div>
             </button>
             <button class="mode-btn" onclick="window.pywebview.api.select_local()">
                 <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-                <div class="mode-btn-text">
-                    本地游戏
-                    <div class="mode-btn-desc">局域网或本机对战</div>
-                </div>
+                <div class="mode-btn-text">本地游戏<div class="mode-btn-desc">局域网或本机对战</div></div>
             </button>
         </div>
     </div>
-
-    <!-- 页面2：连接服务器 -->
     <div id="page-connect" class="page-section">
         <div class="card" style="position:relative;padding-top:48px">
             <button class="back-btn" onclick="window.pywebview.api.go_back()">
@@ -390,18 +266,11 @@ body {
             <p id="status"></p>
         </div>
     </div>
-
 </div>
 <script>
 function showPage(name) {
-    document.querySelectorAll('.page-section').forEach(function(el) {
-        el.classList.remove('active');
-    });
+    document.querySelectorAll('.page-section').forEach(function(el) { el.classList.remove('active'); });
     document.getElementById('page-' + name).classList.add('active');
-}
-function showOnlineTip() {
-    var tip = document.getElementById('online-tip');
-    if (tip) tip.style.display = 'block';
 }
 function doConnect() {
     var host = document.getElementById('host').value.trim() || 'localhost';
@@ -431,8 +300,8 @@ def main():
         title='城池战争',
         html=CONNECT_HTML,
         width=480,
-        height=440,
-        min_size=(400, 400),
+        height=720,
+        min_size=(400, 600),
         resizable=True,
         text_select=False,
         js_api=GameApi(),
