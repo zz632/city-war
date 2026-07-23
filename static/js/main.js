@@ -12,7 +12,6 @@ let amSpectator = false;    // 是否是观战者
 let authToken = localStorage.getItem('auth_token') || '';
 let isOnlineMode = false;
 let loggedInDisplayName = '';
-let powData = {};  // containerId -> {challenge_id, challenge, difficulty, nonce}
 
 // 密码显示/隐藏切换
 function togglePw(inputId, btn) {
@@ -53,8 +52,7 @@ function initHome() {
     fetch('/api/auth/online_mode').then(r => r.json()).then(data => {
         isOnlineMode = data.online;
         if (isOnlineMode) {
-            // 在线模式：加载 PoW + 检查登录
-            fetchPowChallenge('powContainerLogin');
+            // 在线模式：检查登录
             checkExistingLogin();
         } else {
             // 本地模式：跳过登录，直接进入游戏
@@ -70,7 +68,6 @@ function initHome() {
         e.preventDefault();
         document.getElementById('auth-login').style.display = 'none';
         document.getElementById('auth-register').style.display = 'block';
-        fetchPowChallenge('powContainer');
     });
     document.getElementById('showLogin').addEventListener('click', e => {
         e.preventDefault();
@@ -189,14 +186,11 @@ async function doLogin() {
     const password = document.getElementById('loginPassword').value;
     if (!username || !password) { toast('请输入用户名和密码', 'error'); return; }
 
-    const pow = await solvePow('powContainerLogin');
-    if (!pow) { toast('验证计算中，请稍候', 'error'); return; }
-
     try {
         const res = await fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password, pow_challenge_id: pow.challenge_id, pow_nonce: pow.nonce })
+            body: JSON.stringify({ username, password })
         });
         const data = await res.json();
         if (data.success) {
@@ -206,7 +200,6 @@ async function doLogin() {
             showGameSection();
         } else {
             toast(data.message || '登录失败', 'error');
-            fetchPowChallenge('powContainerLogin');
         }
     } catch (e) {
         toast('网络错误', 'error');
@@ -215,100 +208,10 @@ async function doLogin() {
 
 function openMoreLoginModal() {
     document.getElementById('moreLoginModal').style.display = 'flex';
-    fetchPowChallenge('powContainerGuest');
 }
 
 function closeMoreLoginModal() {
     document.getElementById('moreLoginModal').style.display = 'none';
-}
-
-// ===== Proof of Work =====
-
-async function fetchPowChallenge(containerId) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
-    try {
-        const res = await fetch('/api/auth/pow_challenge');
-        const data = await res.json();
-        powData[containerId] = { challenge_id: data.challenge_id, challenge: data.challenge, difficulty: data.difficulty, nonce: null };
-        // 显示计算进度
-        container.innerHTML = '<span class="pow-status pow-computing">计算中...</span>';
-        // 后台预计算
-        solvePowInBackground(containerId);
-    } catch (e) {
-        container.innerHTML = '';
-        powData[containerId] = null;
-    }
-}
-
-function solvePowInBackground(containerId) {
-    const data = powData[containerId];
-    if (!data) return;
-    const container = document.getElementById(containerId);
-
-    const prefix = '0'.repeat(data.difficulty);
-    const challenge = data.challenge;
-    let nonce = 0;
-
-    async function step() {
-        const batchSize = 500;
-        for (let i = 0; i < batchSize; i++) {
-            const hash = await sha256Async(challenge + String(nonce));
-            if (hash.startsWith(prefix)) {
-                data.nonce = String(nonce);
-                if (container) container.innerHTML = '<span class="pow-status pow-done">✓ 验证成功</span>';
-                return;
-            }
-            nonce++;
-        }
-        // 继续下一批
-        if (container) container.innerHTML = '<span class="pow-status pow-computing">计算中...</span>';
-        requestAnimationFrame(step);
-    }
-    step();
-}
-
-async function solvePow(containerId) {
-    const data = powData[containerId];
-    if (!data) {
-        await fetchPowChallenge(containerId);
-        const d = powData[containerId];
-        if (!d) return null;
-        // 等待计算完成
-        return new Promise(resolve => {
-            const check = setInterval(() => {
-                if (d.nonce !== null) {
-                    clearInterval(check);
-                    resolve({ challenge_id: d.challenge_id, nonce: d.nonce });
-                }
-            }, 50);
-            // 超时10秒
-            setTimeout(() => { clearInterval(check); resolve(null); }, 10000);
-        });
-    }
-    if (data.nonce !== null) {
-        return { challenge_id: data.challenge_id, nonce: data.nonce };
-    }
-    // 等待计算完成
-    return new Promise(resolve => {
-        const check = setInterval(() => {
-            if (data.nonce !== null) {
-                clearInterval(check);
-                resolve({ challenge_id: data.challenge_id, nonce: data.nonce });
-            }
-        }, 50);
-        setTimeout(() => { clearInterval(check); resolve(null); }, 10000);
-    });
-}
-
-// SHA-256 - 使用浏览器原生 crypto.subtle.digest（异步，结果正确可靠）
-async function sha256Async(str) {
-    const data = new TextEncoder().encode(str);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    const hashArray = new Uint8Array(hashBuffer);
-    let hex = '';
-    for (let i = 0; i < hashArray.length; i++) hex += hashArray[i].toString(16).padStart(2, '0');
-    return hex;
 }
 
 async function doRegister() {
@@ -319,11 +222,8 @@ async function doRegister() {
     if (!username || !password) { toast('请填写用户名和密码', 'error'); return; }
     if (password !== passwordConfirm) { toast('两次输入的密码不一致', 'error'); return; }
 
-    const pow = await solvePow('powContainer');
-    if (!pow) { toast('验证计算中，请稍候', 'error'); return; }
-
     try {
-        const body = { username, display_name, password, pow_challenge_id: pow.challenge_id, pow_nonce: pow.nonce };
+        const body = { username, display_name, password };
         const res = await fetch('/api/auth/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -337,7 +237,6 @@ async function doRegister() {
             showGameSection();
         } else {
             toast(data.message || '注册失败', 'error');
-            fetchPowChallenge('powContainer');
         }
     } catch (e) {
         toast('网络错误', 'error');
@@ -348,14 +247,11 @@ async function doGuestLogin() {
     const display_name = document.getElementById('guestName').value.trim();
     if (!display_name) { toast('请输入昵称', 'error'); return; }
 
-    const pow = await solvePow('powContainerGuest');
-    if (!pow) { toast('验证计算中，请稍候', 'error'); return; }
-
     try {
         const res = await fetch('/api/auth/guest', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ display_name, pow_challenge_id: pow.challenge_id, pow_nonce: pow.nonce })
+            body: JSON.stringify({ display_name })
         });
         const data = await res.json();
         if (data.success) {
@@ -365,7 +261,6 @@ async function doGuestLogin() {
             showGameSection();
         } else {
             toast(data.message || '登录失败', 'error');
-            fetchPowChallenge('powContainerGuest');
         }
     } catch (e) {
         toast('网络错误', 'error');

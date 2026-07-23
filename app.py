@@ -164,11 +164,6 @@ ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'zz632')
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '')
 admin_sessions = {}  # admin_token -> True
 
-# ===== Proof of Work 验证 =====
-POW_DIFFICULTY = int(os.environ.get('POW_DIFFICULTY', '4'))  # 前导零十六进制位数（4=16bit，约0.1-0.5秒）
-POW_CHALLENGES = {}  # challenge_id -> {challenge, difficulty, created_at}
-POW_EXPIRE_SECONDS = 300  # 挑战5分钟过期
-
 # ===== IP 限流 =====
 IP_RATE_LIMIT = {}  # ip -> {count, reset_time}
 IP_RATE_LIMIT_MAX = 10  # 每IP每分钟最多10次请求
@@ -221,14 +216,6 @@ OAUTH_PROVIDERS = {
 oauth_states = {}
 
 
-def _cleanup_pow_challenges():
-    """清理过期的 PoW 挑战"""
-    now = time.time()
-    expired = [cid for cid, c in POW_CHALLENGES.items() if now - c['created_at'] > POW_EXPIRE_SECONDS]
-    for cid in expired:
-        del POW_CHALLENGES[cid]
-
-
 def _check_rate_limit(ip):
     """检查IP限流，返回True表示允许，False表示超限"""
     now = time.time()
@@ -238,22 +225,6 @@ def _check_rate_limit(ip):
         return True
     info['count'] += 1
     return info['count'] <= IP_RATE_LIMIT_MAX
-
-
-def verify_pow(challenge_id, nonce):
-    """验证 Proof of Work：检查 nonce 是否使 hash 满足难度要求"""
-    if not challenge_id or not nonce:
-        return False
-    challenge = POW_CHALLENGES.pop(challenge_id, None)
-    if not challenge:
-        return False
-    # 检查是否过期
-    if time.time() - challenge['created_at'] > POW_EXPIRE_SECONDS:
-        return False
-    # 计算 hash
-    hash_hex = hashlib.sha256((challenge['challenge'] + nonce).encode()).hexdigest()
-    # 检查前导零
-    return hash_hex.startswith('0' * challenge['difficulty'])
 
 
 def _hash_password(password):
@@ -335,8 +306,6 @@ def api_register():
     username = data.get('username', '').strip()
     password = data.get('password', '')
     display_name = data.get('display_name', '').strip() or username
-    pow_challenge_id = data.get('pow_challenge_id', '')
-    pow_nonce = data.get('pow_nonce', '')
 
     if not username or not password:
         return jsonify({'success': False, 'message': '用户名和密码不能为空'}), 400
@@ -346,10 +315,6 @@ def api_register():
         return jsonify({'success': False, 'message': '密码至少4个字符'}), 400
     if username in users:
         return jsonify({'success': False, 'message': '用户名已被占用'}), 400
-
-    # Proof of Work 验证
-    if not verify_pow(pow_challenge_id, pow_nonce):
-        return jsonify({'success': False, 'message': '验证失败，请重试'}), 403
 
     users[username] = {
         'password_hash': _hash_password(password),
@@ -373,15 +338,9 @@ def api_login():
     data = request.get_json() or {}
     username = data.get('username', '').strip()
     password = data.get('password', '')
-    pow_challenge_id = data.get('pow_challenge_id', '')
-    pow_nonce = data.get('pow_nonce', '')
 
     if not username or not password:
         return jsonify({'success': False, 'message': '用户名和密码不能为空'}), 400
-
-    # Proof of Work 验证
-    if not verify_pow(pow_challenge_id, pow_nonce):
-        return jsonify({'success': False, 'message': '验证失败，请重试'}), 403
 
     user = users.get(username)
     if not user or not _check_password(password, user.get('password_hash', '')):
@@ -401,22 +360,16 @@ def api_login():
 
 @app.route('/api/auth/guest', methods=['POST'])
 def api_guest_login():
-    """游客登录：输入昵称 + PoW 验证"""
+    """游客登录：输入昵称"""
     if not _check_rate_limit(request.remote_addr):
         return jsonify({'success': False, 'message': '请求过于频繁，请稍后再试'}), 429
     data = request.get_json() or {}
     display_name = data.get('display_name', '').strip()
-    pow_challenge_id = data.get('pow_challenge_id', '')
-    pow_nonce = data.get('pow_nonce', '')
 
     if not display_name:
         return jsonify({'success': False, 'message': '请输入昵称'}), 400
     if len(display_name) < 1 or len(display_name) > 12:
         return jsonify({'success': False, 'message': '昵称需要1-12个字符'}), 400
-
-    # Proof of Work 验证
-    if not verify_pow(pow_challenge_id, pow_nonce):
-        return jsonify({'success': False, 'message': '验证失败，请重试'}), 403
 
     # 生成游客用户名（guest_ + 随机数）
     guest_id = str(uuid.uuid4())[:8]
@@ -447,24 +400,6 @@ def api_auth_check():
 @app.route('/api/auth/online_mode', methods=['GET'])
 def api_online_mode():
     return jsonify({'online': ONLINE_MODE})
-
-
-@app.route('/api/auth/pow_challenge', methods=['GET'])
-def api_pow_challenge():
-    """生成 PoW 挑战"""
-    _cleanup_pow_challenges()
-    challenge_id = uuid.uuid4().hex
-    challenge_str = uuid.uuid4().hex + uuid.uuid4().hex
-    POW_CHALLENGES[challenge_id] = {
-        'challenge': challenge_str,
-        'difficulty': POW_DIFFICULTY,
-        'created_at': time.time(),
-    }
-    return jsonify({
-        'challenge_id': challenge_id,
-        'challenge': challenge_str,
-        'difficulty': POW_DIFFICULTY,
-    })
 
 
 @app.route('/api/auth/oauth/<provider>', methods=['GET'])
