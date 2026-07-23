@@ -223,11 +223,6 @@ body {
 .code-row .field-input { flex: 1; }
 .code-row .btn { flex-shrink: 0; width: 110px; font-size: 14px; padding: 10px 12px; }
 
-.pow-container { margin-bottom: 6px; min-height: 20px; display: flex; align-items: center; justify-content: center; width: 100%; text-align: center; }
-.pow-status { font-size: 13px; color: var(--text-secondary); }
-.pow-status.pow-done { color: var(--green); }
-.pow-status.pow-computing { color: var(--orange); }
-
 .oauth-section { margin-top: 4px; }
 .oauth-btns { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
 .oauth-btn-text {
