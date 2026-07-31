@@ -407,6 +407,18 @@ function initLobby() {
         toast('已催促房主', 'info');
     });
 
+    // 加入观战按钮
+    const spectateBtn = document.getElementById('spectateBtn');
+    if (spectateBtn) spectateBtn.addEventListener('click', () => {
+        socket.emit('spectate_join', { room_id: roomId, player_id: myPlayerId });
+    });
+
+    // 退出观战按钮
+    const unspectateBtn = document.getElementById('unspectateBtn');
+    if (unspectateBtn) unspectateBtn.addEventListener('click', () => {
+        socket.emit('unspectate_join', { room_id: roomId, player_id: myPlayerId });
+    });
+
     // 聊天
     setupChat();
 
@@ -427,23 +439,26 @@ async function fetchLobbyState(roomId) {
 
 function renderLobbyPlayers(players) {
     const list = document.getElementById('playerList');
+    const specList = document.getElementById('spectatorList');
     if (!list) return;
     list.innerHTML = '';
+    if (specList) specList.innerHTML = '';
+
     const arr = Array.isArray(players) ? players : Object.values(players);
-    arr.forEach(p => {
+    const regularPlayers = arr.filter(p => !p.is_spectator);
+    const spectators = arr.filter(p => p.is_spectator);
+
+    // 渲染玩家列表
+    regularPlayers.forEach(p => {
         const li = document.createElement('li');
         li.className = 'player-item' + (p.id === myPlayerId ? ' self' : '');
 
-        // 名称旁的标签（左边）
         const nameTags = [];
         if (p.id === myPlayerId) nameTags.push('<span class="badge badge-blue" style="font-size:10px">我</span>');
         if (p.is_host) nameTags.push('<span class="badge badge-gold" style="font-size:10px">房主</span>');
 
-        // 游戏状态badge（右边）
         let statusBadge = '';
-        if (p.is_spectator) {
-            statusBadge = '<span class="badge badge-blue">观战</span>';
-        } else if (p.is_ready) {
+        if (p.is_ready) {
             statusBadge = '<span class="badge badge-green">已准备</span>';
         } else {
             statusBadge = '<span class="badge badge-gray">等待中</span>';
@@ -459,11 +474,48 @@ function renderLobbyPlayers(players) {
         `;
         list.appendChild(li);
     });
+
+    if (regularPlayers.length === 0) {
+        const li = document.createElement('li');
+        li.className = 'player-item';
+        li.innerHTML = '<span style="color:var(--text-dim)">等待玩家加入...</span>';
+        list.appendChild(li);
+    }
+
+    // 渲染观战者列表
+    if (specList) {
+        spectators.forEach(p => {
+            const li = document.createElement('li');
+            li.className = 'player-item' + (p.id === myPlayerId ? ' self' : '');
+
+            const nameTags = [];
+            if (p.id === myPlayerId) nameTags.push('<span class="badge badge-blue" style="font-size:10px">我</span>');
+
+            li.innerHTML = `
+                <span class="player-name">
+                    <span class="player-dot"></span>
+                    ${esc(p.name)}
+                    ${nameTags.join(' ')}
+                </span>
+                <span class="badge badge-blue">观战</span>
+            `;
+            specList.appendChild(li);
+        });
+
+        if (spectators.length === 0) {
+            const li = document.createElement('li');
+            li.className = 'player-item';
+            li.innerHTML = '<span style="color:var(--text-dim)">暂无观战者</span>';
+            specList.appendChild(li);
+        }
+    }
 }
 
 function updateLobbyButtons(players) {
     const startBtn = document.getElementById('startBtn');
     const urgeBtn = document.getElementById('urgeBtn');
+    const spectateBtn = document.getElementById('spectateBtn');
+    const unspectateBtn = document.getElementById('unspectateBtn');
     if (!startBtn || !urgeBtn) return;
 
     const arr = Array.isArray(players) ? players : Object.values(players);
@@ -476,6 +528,16 @@ function updateLobbyButtons(players) {
     } else {
         startBtn.style.display = 'none';
         urgeBtn.style.display = '';
+    }
+
+    // 加入观战按钮：非观战者、非房主可点击加入观战
+    if (spectateBtn) {
+        spectateBtn.style.display = (!me.is_spectator && !me.is_host) ? '' : 'none';
+    }
+
+    // 退出观战按钮：观战者可点击退出观战
+    if (unspectateBtn) {
+        unspectateBtn.style.display = me.is_spectator ? '' : 'none';
     }
 }
 
@@ -514,6 +576,11 @@ function initGame() {
     socket.on('chat_message', data => appendChat(data));
 
     socket.on('error_msg', data => toast(data.message, 'error'));
+
+    socket.on('back_to_lobby', data => {
+        // 游戏结束，所有人回到大厅
+        window.location.href = '/lobby/' + myRoomId + '?pid=' + myPlayerId;
+    });
 
     socket.on('skill_used', data => {
         toast(data.message, 'success');
@@ -583,7 +650,6 @@ function initGame() {
              continueBtn.textContent = '退出游戏';
              continueBtn.onclick = () => {
                  socket.emit('leave_game', { room_id: myRoomId, player_id: myPlayerId });
-                 window.location.href = '/lobby/' + myRoomId + '?pid=' + myPlayerId;
              };
          }
      });

@@ -149,8 +149,8 @@ SKILL_CARDS: Dict[str, Dict] = {
     "reverse": {
         "name": "逆转卡",
         "type": "special",
-        "description": "与一名玩家交换当前城池数（双方均需大于 50 城池）",
-        "effect": {"swap": True, "min_cities": 50}
+        "description": "与一名玩家交换城池数（双方需>50城池，且城池差不超过30）",
+        "effect": {"swap": True, "min_cities": 50, "max_diff": 30}
     }
 }
 
@@ -442,15 +442,22 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
             })
 
     elif skill_type_key == "reverse":
-        # 逆转卡 - 交换城池数
+        # 逆转卡 - 交换城池数（限制城池差）
         if target_id:
             target = game_state.get_player(target_id)
+            max_diff = effect.get('max_diff', 30)
             if target and player.cities > 50 and target.cities > 50:
-                player.cities, target.cities = target.cities, player.cities
-                result["effects"].append({
-                    "type": "swap",
-                    "target": target_id
-                })
+                if abs(player.cities - target.cities) <= max_diff:
+                    player.cities, target.cities = target.cities, player.cities
+                    result["effects"].append({
+                        "type": "swap",
+                        "target": target_id
+                    })
+                else:
+                    result["effects"].append({
+                        "type": "message",
+                        "message": "双方城池差超过" + str(max_diff) + "，无法交换"
+                    })
             else:
                 result["effects"].append({
                     "type": "message",
