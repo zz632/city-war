@@ -49,7 +49,23 @@ def _register():
         room = room_manager.get_room(player.room_id)
         if room and room.game_state and room.game_state.phase != GamePhase.WAITING:
             return
-        room_manager.leave_room(player_id)
+        # 延迟移除：页面跳转会导致短暂断连，等5秒看是否重连
+        def _delayed_leave():
+            # 检查是否已重连（ws_player_map中有新sid映射到该player_id）
+            for sid, pid in ws_player_map.items():
+                if pid == player_id:
+                    return  # 已重连，不移除
+            # 确认玩家还在
+            p = room_manager.get_player(player_id)
+            if not p:
+                return
+            r = room_manager.get_room(p.room_id)
+            # 如果游戏在进行中，也不移除
+            if r and r.game_state and r.game_state.phase != GamePhase.WAITING:
+                return
+            room_manager.leave_room(player_id)
+            print(f'[WS] 延迟移除玩家: {player_id}')
+        threading.Timer(5.0, _delayed_leave).start()
 
     # ---- 大厅 ----
 
@@ -113,9 +129,49 @@ def _register():
 
         _emit('urge_received', {'player_name': player.name}, room=room_id)
 
+    @socketio.on('spectate_join')
+    def on_spectate_join(data):
+        room_id = str(data.get('room_id', '')).strip()
+        player_id = data.get('player_id', '')
+        room = room_manager.get_room(room_id)
+        if not room or player_id not in room.players:
+            return
+        player = room.players[player_id]
+        # 房主不能观战
+        if player.is_host:
+            return
+        # 游戏进行中不能从玩家变为观战者
+        if room.game_state and room.game_state.phase != GamePhase.WAITING:
+            return
+        player.is_spectator = True
+        player.is_alive = False
+        player.cities = 0
+        _emit('lobby_update', {
+            'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
+        }, room=room_id)
+
+    @socketio.on('unspectate_join')
+    def on_unspectate_join(data):
+        room_id = str(data.get('room_id', '')).strip()
+        player_id = data.get('player_id', '')
+        room = room_manager.get_room(room_id)
+        if not room or player_id not in room.players:
+            return
+        player = room.players[player_id]
+        if not player.is_spectator:
+            return
+        if room.game_state and room.game_state.phase != GamePhase.WAITING:
+            return
+        player.is_spectator = False
+        player.is_alive = True
+        player.cities = 100
+        _emit('lobby_update', {
+            'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
+        }, room=room_id)
+
     @socketio.on('leave_game')
     def on_leave_game(data):
-        """玩家退出游戏，重置玩家状态和房间状态"""
+        """玩家退出游戏：重置房间回大厅状态，中途观战者自动变玩家"""
         room_id = str(data.get('room_id', '')).strip()
         player_id = data.get('player_id', '')
 
@@ -123,7 +179,7 @@ def _register():
         if not room or player_id not in room.players:
             return
 
-        # 重置所有玩家状态（游戏结束后所有人一起重置）
+        # 重置所有玩家状态
         for p in room.players.values():
             p.is_alive = True
             p.is_spectator = False
@@ -136,8 +192,13 @@ def _register():
             p.status_effects = {}
             p.action = None
 
-        # 重置房间游戏状态，使房间可以重新开始
+        # 重置房间游戏状态
         room.game_state = None
+
+        # 通知所有人回到大厅
+        _emit('back_to_lobby', {
+            'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
+        }, room=room_id)
 
     # ---- 聊天 ----
 
@@ -452,12 +513,15 @@ def _register():
                     _emit('error_msg', {'message': '目标无效'})
                     return
                 min_c = effect.get('min_cities', 0)
-                if player.cities > min_c and target.cities > min_c:
-                    player.cities, target.cities = target.cities, player.cities
-                    result_msg += '，与 ' + target.name + ' 交换了城池数'
-                else:
+                max_diff = effect.get('max_diff', 0)
+                if player.cities <= min_c or target.cities <= min_c:
                     _emit('error_msg', {'message': '双方城池需超过' + str(min_c) + '才能交换'})
                     return
+                if max_diff and abs(player.cities - target.cities) > max_diff:
+                    _emit('error_msg', {'message': '双方城池差超过' + str(max_diff) + '，无法交换'})
+                    return
+                player.cities, target.cities = target.cities, player.cities
+                result_msg += '，与 ' + target.name + ' 交换了城池数'
 
             # 侦查卡 - 需要目标，揭示信息
             elif effect.get('reveal'):

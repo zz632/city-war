@@ -25,6 +25,19 @@
             </ul>
         </div>
 
+        <!-- 观战席 -->
+        <div class="card">
+            <div class="section-title">
+                <svg style="width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;vertical-align:-2px" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                观战席
+            </div>
+            <ul class="player-list" id="spectatorList">
+                <li class="player-item">
+                    <span style="color:var(--text-dim)">暂无观战者</span>
+                </li>
+            </ul>
+        </div>
+
         <!-- 聊天 -->
         <div class="card" style="display:flex;flex-direction:column;min-height:160px">
             <div class="section-title">聊天</div>
@@ -44,6 +57,13 @@
             <button id="urgeBtn" class="btn btn-secondary btn-lg" style="flex:1;display:none">
                 <svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>
                 <span>催促房主开始</span>
+            </button>
+            <button id="spectateBtn" class="btn btn-secondary btn-lg" style="flex:1;display:none">
+                <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                <span>加入观战</span>
+            </button>
+            <button id="unspectateBtn" class="btn btn-secondary btn-lg" style="flex:1;display:none">
+                <span>退出观战</span>
             </button>
         </div>
     </div>
