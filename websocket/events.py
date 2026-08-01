@@ -5,7 +5,7 @@ WebSocket 事件处理模块
 """
 from flask_socketio import join_room as sio_join, leave_room as sio_leave
 from flask import request
-from game.models import GamePhase
+from game.models import GamePhase, Player
 from game.skills import SKILL_CARDS
 import random
 import threading
@@ -164,9 +164,99 @@ def _register():
             return
         player.is_spectator = False
         player.is_alive = True
-        player.cities = 100
+        player.cities = 250
         _emit('lobby_update', {
             'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
+        }, room=room_id)
+
+    @socketio.on('add_ai_bot')
+    def on_add_ai_bot(data):
+        """添加AI人机到房间"""
+        import json
+        from game.models import Player
+        from app import _decrypt_api_key, users
+
+        room_id = str(data.get('room_id', '')).strip()
+        player_id = data.get('player_id', '')
+
+        room = room_manager.get_room(room_id)
+        if not room or player_id not in room.players:
+            _emit('error_msg', {'message': '房间或玩家不存在'}, room=request.sid)
+            return
+
+        # 检查房间人数上限
+        if len(room.players) >= room.max_players:
+            _emit('error_msg', {'message': '房间已满'}, room=request.sid)
+            return
+
+        # 检查AI数量上限（每房间最多4个）
+        ai_count = sum(1 for p in room.players.values() if p.is_ai)
+        if ai_count >= 4:
+            _emit('error_msg', {'message': 'AI人机已达上限（4个）'}, room=request.sid)
+            return
+
+        # 获取AI配置：优先从服务器端取（加密），fallback到前端传入
+        config = {}
+        caller = room.players.get(player_id)
+        if caller and caller.username and caller.username in users:
+            # 登录用户：从服务器解密获取
+            u = users[caller.username]
+            ai_cfg = u.get('ai_config', {})
+            api_key = _decrypt_api_key(ai_cfg.get('api_key_encrypted', ''))
+            if api_key:
+                config = {
+                    'base_url': ai_cfg.get('base_url', 'https://api.openai.com/v1'),
+                    'api_key': api_key,
+                    'model': ai_cfg.get('model', 'gpt-4o-mini'),
+                }
+        # 服务器端取不到，尝试前端传入的配置（本地模式或username未关联的fallback）
+        if not config.get('api_key'):
+            config = data.get('config', {})
+        if not config.get('api_key'):
+            _emit('error_msg', {'message': '请先在设置中配置 API Key'}, room=request.sid)
+            return
+
+        # 生成AI玩家
+        ai_num = ai_count + 1
+        ai_id = 'ai_' + str(uuid.uuid4())[:8]
+        ai_name = '🤖 AI-' + str(ai_num)
+
+        ai_player = Player(
+            id=ai_id,
+            name=ai_name,
+            room_id=room_id,
+            is_ai=True,
+            is_alive=True,
+            cities=250
+        )
+
+        room.players[ai_id] = ai_player
+        room_manager.players[ai_id] = ai_player
+
+        # 保存AI配置到玩家对象（供后续AI决策使用）
+        ai_player.status_effects['ai_config'] = config
+
+        _emit('lobby_update', {
+            'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
+        }, room=room_id)
+
+    @socketio.on('toggle_allow_join')
+    def on_toggle_allow_join(data):
+        """房主切换是否允许中途加入"""
+        room_id = str(data.get('room_id', '')).strip()
+        player_id = data.get('player_id', '')
+        allow = bool(data.get('allow', False))
+
+        room = room_manager.get_room(room_id)
+        if not room or player_id not in room.players:
+            return
+        if room.host_id != player_id:
+            return
+
+        room.allow_join_after_start = allow
+        _emit('lobby_update', {
+            'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()},
+            'allow_join_after_start': allow
         }, room=room_id)
 
     @socketio.on('leave_game')
@@ -183,7 +273,7 @@ def _register():
         for p in room.players.values():
             p.is_alive = True
             p.is_spectator = False
-            p.cities = 100
+            p.cities = 250
             p.skills = []
             p.alliance_with = None
             p.alliance_benefits = 0
@@ -191,9 +281,18 @@ def _register():
             p.repair_active = False
             p.status_effects = {}
             p.action = None
+            p.action_history = []
 
         # 重置房间游戏状态
         room.game_state = None
+
+        # 移除AI玩家（AI不回到大厅）
+        ai_ids = [pid for pid, p in room.players.items() if p.is_ai]
+        for aid in ai_ids:
+            if aid in room.players:
+                del room.players[aid]
+            if aid in room_manager.players:
+                del room_manager.players[aid]
 
         # 通知所有人回到大厅
         _emit('back_to_lobby', {
@@ -244,6 +343,11 @@ def _register():
         ws_player_map[request.sid] = player_id
         _emit('game_state', _build_game_state(room))
 
+        # 游戏进行中且为行动阶段时，触发AI自动行动
+        if room.game_state and room.game_state.phase == GamePhase.ACTION:
+            print(f'[AI] game_join triggers ai_actions, room={room_id}')
+            _trigger_ai_actions(room_id)
+
     @socketio.on('submit_action')
     def on_submit_action(data):
         room_id = str(data.get('room_id', '')).strip()
@@ -251,7 +355,6 @@ def _register():
         action_type = data.get('action_type', '')
         target_id = data.get('target_id')
         bet = data.get('bet', 0)
-        gesture = data.get('gesture')
 
         room = room_manager.get_room(room_id)
         if not room:
@@ -264,7 +367,7 @@ def _register():
             return
 
         ok = room_manager.submit_action(room_id, player_id, action_type,
-                                         target_id, bet, gesture)
+                                         target_id, bet)
         if not ok:
             _emit('error_msg', {'message': '行动无效'})
             return
@@ -273,7 +376,6 @@ def _register():
             'type': action_type,
             'target_id': target_id,
             'bet': bet,
-            'gesture': gesture,
         }
         # 补充目标玩家名称
         if target_id and target_id in room.players:
@@ -367,7 +469,6 @@ def _register():
             _emit('error_msg', {'message': '无法使用技能卡'})
             return
 
-        # 仅在行动阶段允许使用技能卡
         if room.game_state.phase != GamePhase.ACTION:
             _emit('error_msg', {'message': '当前阶段无法使用技能卡'})
             return
@@ -377,244 +478,9 @@ def _register():
             _emit('error_msg', {'message': '无法使用技能卡'})
             return
 
-        # 检查玩家是否拥有该技能卡
-        skill_card = None
-        for s in player.skills:
-            if s.get('skill_type') == skill_id or s.get('id') == skill_id:
-                skill_card = s
-                break
-
-        if not skill_card:
-            _emit('error_msg', {'message': '没有这张技能卡'})
-            return
-
-        # 处理技能卡效果
-        skill_type = skill_card.get('type', '')
-        effect = skill_card.get('effect', {})
-        result_msg = player.name + ' 使用了【' + skill_card.get('name', '技能卡') + '】'
-
-        # 攻击类 - 需要目标
-        if skill_type == 'attack' and target_id:
-            target = room.players.get(target_id)
-            if not target or not target.is_alive:
-                _emit('error_msg', {'message': '目标无效'})
-                return
-            damage = effect.get('damage', 0)
-            target.change_cities(-damage)
-            result_msg += '，对 ' + target.name + ' 造成 ' + str(damage) + ' 伤害'
-
-            # 破城卡：自身损失
-            if effect.get('self_damage'):
-                player.change_cities(-effect['self_damage'])
-                result_msg += '，自身损失 ' + str(effect['self_damage']) + ' 城池'
-
-            # 奇袭卡：标记无视守城
-            if effect.get('ignore_defend'):
-                player.status_effects['ignore_defend'] = True
-                result_msg += '（无视守城）'
-
-            # 连弩卡：对第二名目标造成伤害
-            if effect.get('multi_target'):
-                # 寻找另一个存活玩家（非目标、非自己）
-                other_targets = [pid for pid, p in room.players.items()
-                                 if p.is_alive and not p.is_spectator
-                                 and pid != target_id and pid != player_id]
-                if other_targets:
-                    second_id = random.choice(other_targets)
-                    second = room.players[second_id]
-                    second_damage = effect.get('damage', 0)
-                    second.change_cities(-second_damage)
-                    result_msg += '，对 ' + second.name + ' 造成 ' + str(second_damage) + ' 伤害'
-
-            # 毒计卡：标记眩晕（持续到下一回合结束）
-            if effect.get('stun'):
-                target.status_effects['stun'] = 2  # 持续2个清理周期，确保下回合生效
-                if target_id in room.game_state.actions:
-                    room.game_state.actions[target_id] = {
-                        'player_id': target_id,
-                        'action_type': 'skip',
-                        'target_id': None,
-                        'bet': 0,
-                        'gesture': None,
-                        'timestamp': room.game_state.actions[target_id].get('timestamp', 0)
-                    }
-                result_msg += '，' + target.name + ' 下回合无法行动'
-
-        # 防御类 - 自身buff
-        elif skill_type == 'defense':
-            heal = effect.get('heal', 0)
-            if heal:
-                player.change_cities(heal)
-                result_msg += '，恢复 ' + str(heal) + ' 城池'
-
-            if effect.get('damage_reduction'):
-                player.status_effects['damage_reduction'] = effect['damage_reduction']
-                result_msg += '，下回合伤害减半'
-
-            if effect.get('reflect'):
-                player.status_effects['reflect'] = effect['reflect']
-                result_msg += '，下回合被攻击时反弹 ' + str(effect['reflect']) + ' 伤害'
-
-            if effect.get('immune'):
-                player.status_effects['immune'] = True
-                result_msg += '，下回合免疫攻击'
-
-            if effect.get('untargetable'):
-                player.status_effects['untargetable'] = True
-                result_msg += '，下回合无法被选中'
-
-        # 资源类 - 即时效果
-        elif skill_type == 'resource':
-            heal = effect.get('heal', 0)
-            if heal:
-                player.change_cities(heal)
-                result_msg += '，获得 ' + str(heal) + ' 城池'
-            percent = effect.get('percent', 0)
-            if percent:
-                gain = int(player.cities * percent)
-                player.change_cities(gain)
-                result_msg += '，获得 ' + str(gain) + ' 城池'
-            steal = effect.get('steal', 0)
-            if steal and steal > 0:
-                total = 0
-                for pid, p in room.players.items():
-                    if pid != player_id and p.is_alive and not p.is_spectator:
-                        p.change_cities(-steal)
-                        total += steal
-                player.change_cities(total)
-                result_msg += '，从其他玩家处掠夺 ' + str(total) + ' 城池'
-
-            # 屯田卡：持续回城
-            if effect.get('recurring'):
-                rounds = effect.get('recurring', 0)
-                amount = effect.get('amount', 0)
-                player.status_effects['recurring'] = {'rounds': rounds, 'amount': amount}
-                result_msg += '，接下来 ' + str(rounds) + ' 回合每回合获得 ' + str(amount) + ' 城池'
-
-            # 募兵卡：强制攻城
-            if effect.get('force_attack'):
-                player.status_effects['force_attack'] = True
-                result_msg += '，下回合必须攻城'
-
-            # 丰收卡：跳过回合
-            if effect.get('skip_turn'):
-                player.status_effects['skip_turn'] = True
-                result_msg += '，下回合跳过行动'
-
-        # 特殊类
-        elif skill_type == 'special':
-            # 逆转卡 - 需要目标
-            if effect.get('swap'):
-                if not target_id:
-                    _emit('error_msg', {'message': '请选择目标玩家'})
-                    return
-                target = room.players.get(target_id)
-                if not target or not target.is_alive:
-                    _emit('error_msg', {'message': '目标无效'})
-                    return
-                min_c = effect.get('min_cities', 0)
-                max_diff = effect.get('max_diff', 0)
-                if player.cities <= min_c or target.cities <= min_c:
-                    _emit('error_msg', {'message': '双方城池需超过' + str(min_c) + '才能交换'})
-                    return
-                if max_diff and abs(player.cities - target.cities) > max_diff:
-                    _emit('error_msg', {'message': '双方城池差超过' + str(max_diff) + '，无法交换'})
-                    return
-                player.cities, target.cities = target.cities, player.cities
-                result_msg += '，与 ' + target.name + ' 交换了城池数'
-
-            # 侦查卡 - 需要目标，揭示信息
-            elif effect.get('reveal'):
-                if not target_id:
-                    _emit('error_msg', {'message': '请选择侦查目标'})
-                    return
-                target = room.players.get(target_id)
-                if not target:
-                    _emit('error_msg', {'message': '目标无效'})
-                    return
-                skill_names = '、'.join([s.get('name', '?') for s in target.skills]) if target.skills else '无'
-                target_action = room.game_state.actions.get(target_id)
-                if target_action:
-                    action_names = {'attack': '攻城', 'defend': '守城', 'jungle': '打野', 'duel': '约战', 'repair': '修城', 'alliance': '结盟', 'skip': '跳过'}
-                    action_info = action_names.get(target_action['action_type'], target_action['action_type'])
-                    if target_action.get('target_id') and target_action['target_id'] in room.players:
-                        action_info += ' → ' + room.players[target_action['target_id']].name
-                else:
-                    action_info = '未提交'
-                result_msg += '，侦查 ' + target.name + '：手牌【' + skill_names + '】行动：' + action_info
-
-            # 离间卡 - 需要目标，阻止目标攻击自己
-            elif effect.get('prevent_attack'):
-                if not target_id:
-                    _emit('error_msg', {'message': '请选择离间目标'})
-                    return
-                target = room.players.get(target_id)
-                if not target or not target.is_alive:
-                    _emit('error_msg', {'message': '目标无效'})
-                    return
-                rounds = effect.get('prevent_attack', 1)
-                target.status_effects['blocked_attack'] = {'target': player_id, 'rounds': rounds}
-                player.status_effects['blocked_attack'] = {'target': target_id, 'rounds': rounds}
-                result_msg += '，' + player.name + ' 与 ' + target.name + ' 下回合无法互相攻击'
-
-            # 伪装卡 - 不需要目标
-            elif effect.get('disguise'):
-                player.status_effects['disguise'] = True
-                result_msg += '，下回合行动将显示为随机行动'
-
-            # 急救卡 - 不需要目标，城池数为负时可救命
-            elif effect.get('emergency_heal'):
-                heal_amount = effect['emergency_heal']
-                if player.cities < 0 or not player.is_alive:
-                    player.cities += heal_amount
-                    if player.cities >= 0:
-                        player.is_alive = True
-                        player.is_spectator = False
-                        result_msg += '，紧急恢复 ' + str(heal_amount) + ' 城池，已复活！'
-                    else:
-                        result_msg += '，紧急恢复 ' + str(heal_amount) + ' 城池'
-                else:
-                    result_msg += '，城池数正常，急救卡效果未触发'
-
-            else:
-                _emit('error_msg', {'message': '无法使用该技能卡'})
-                return
-
-        else:
-            _emit('error_msg', {'message': '无法使用该技能卡，可能缺少目标'})
-            return
-
-        # 移除技能卡
-        player.skills.remove(skill_card)
-
-        # 检查是否有人阵亡
-        for p in room.players.values():
-            if not p.is_alive and not p.is_spectator:
-                p.is_spectator = True
-
-        # 移除死亡玩家的已提交行动
-        dead_player_ids = [pid for pid, p in room.players.items() if not p.is_alive]
-        for dead_id in dead_player_ids:
-            room.game_state.actions.pop(dead_id, None)
-
-        # 仅向使用者发送技能卡详情
-        _emit('skill_used', {
-            'player_id': player_id,
-            'player_name': player.name,
-            'skill_name': skill_card.get('name', '技能卡'),
-            'message': result_msg,
-            'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
-        }, room=player_id)
-
-        # 向全房间发送玩家状态更新（不含技能卡细节）
-        _emit('players_update', {
-            'players': {pid: p.to_dict(is_spectator=False, is_self=(pid == player_id)) for pid, p in room.players.items()}
-        }, room=room_id)
-
-        # 技能卡可能杀死玩家，重新检查是否所有存活玩家都已提交行动
-        alive = [p for p in room.players.values() if p.is_alive and not p.is_spectator]
-        if len(room.game_state.actions) >= len(alive):
-            _process_round(room_id)
+        success, result_msg = _apply_skill_card(room_id, player_id, skill_id, target_id)
+        if not success:
+            _emit('error_msg', {'message': '技能卡使用失败'})
 
     @socketio.on('duel_shot')
     def on_duel_shot(data):
@@ -632,6 +498,50 @@ def _register():
             return
 
         _do_duel_shot(room_id, player_id, shots)
+
+    @socketio.on('duel_reject')
+    def on_duel_reject(data):
+        """被约战方拒绝约战"""
+        room_id = str(data.get('room_id', '')).strip()
+        player_id = data.get('player_id', '')
+        room = room_manager.get_room(room_id)
+        if not room or not room.game_state or not room.game_state.duel:
+            return
+        duel = room.game_state.duel
+        # 只有被约战方(非initiator)才能拒绝
+        if duel.get('target') != player_id:
+            return
+        bet = duel['bet']
+        tribute = int(bet * 0.5)  # 50%赌注贡奉
+        rejecter = room.players.get(player_id)
+        # 找对方
+        other_id = duel['initiator']
+        other = room.players.get(other_id)
+        if rejecter and other and tribute > 0:
+            rejecter.change_cities(-tribute)
+            other.change_cities(tribute)
+        room.game_state.duel = None
+        # 如果还有待处理的约战，继续；否则回到正常流程
+        if hasattr(room.game_state, '_pending_duels') and room.game_state._pending_duels:
+            next_duel = room.game_state._pending_duels.pop(0)
+            _start_duel(room_id, next_duel)
+        else:
+            if hasattr(room.game_state, '_pending_round_result') and room.game_state._pending_round_result:
+                pending = room.game_state._pending_round_result
+                pending['players'] = {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
+                _emit('round_result', pending, room=room_id)
+                room.game_state._pending_round_result = None
+                _prefetch_ai_decisions(room_id)
+                _auto_ready_ai(room_id)
+            room.game_state.phase = GamePhase.MEETING
+            if hasattr(room.game_state, 'ready_players'):
+                room.game_state.ready_players = set()
+        _emit('duel_rejected', {
+            'rejecter_name': rejecter.name if rejecter else '',
+            'other_name': other.name if other else '',
+            'tribute': tribute,
+            'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
+        }, room=room_id)
 
     @socketio.on('ready_next_round')
     def on_ready_next_round(data):
@@ -658,12 +568,242 @@ def _register():
         if len(alive_ready) >= len(alive):
             gs.ready_players = set()
 
-            # 检查拍卖（每回合只触发一次）
-            if gs.round >= 6 and (gs.round - 6) % 2 == 0 and not getattr(gs, '_auction_done_this_round', False):
+            # 检查拍卖（第10轮起每5轮触发一次）
+            if gs.round >= 10 and (gs.round - 10) % 5 == 0 and not getattr(gs, '_auction_done_this_round', False):
                 gs._auction_done_this_round = True
                 _start_auction(room_id)
             else:
                 _start_next_round(room_id)
+
+
+# ===== 技能卡公共逻辑 =====
+
+# 需要目标的技能卡类型
+_SKILL_NEEDS_TARGET = {'attack', 'special'}
+# 特殊类中不需要目标的卡ID
+_SKILL_NO_TARGET_IDS = {'disguise', 'first_aid'}
+
+
+def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
+    """使用技能卡（公共逻辑，供 on_use_skill 和 AI 调用）
+    返回 (success: bool, result_msg: str)
+    """
+    room = room_manager.get_room(room_id)
+    if not room or not room.game_state:
+        return False, ''
+
+    player = room.players.get(player_id)
+    if not player or not player.is_alive:
+        return False, ''
+
+    # 查找技能卡
+    skill_card = None
+    for s in player.skills:
+        if s.get('skill_type') == skill_id or s.get('id') == skill_id:
+            skill_card = s
+            break
+
+    if not skill_card:
+        return False, ''
+
+    skill_type = skill_card.get('type', '')
+    effect = skill_card.get('effect', {})
+    result_msg = player.name + ' 使用了【' + skill_card.get('name', '技能卡') + '」'
+
+    # 攻击类 - 需要目标
+    if skill_type == 'attack' and target_id:
+        target = room.players.get(target_id)
+        if not target or not target.is_alive:
+            return False, ''
+        damage = effect.get('damage', 0)
+        target.change_cities(-damage)
+        result_msg += '，对 ' + target.name + ' 造成 ' + str(damage) + ' 伤害'
+
+        if effect.get('self_damage'):
+            player.change_cities(-effect['self_damage'])
+            result_msg += '，自身损失 ' + str(effect['self_damage']) + ' 城池'
+
+        if effect.get('ignore_defend'):
+            player.status_effects['ignore_defend'] = True
+            result_msg += '（无视守城）'
+
+        if effect.get('multi_target'):
+            other_targets = [pid for pid, p in room.players.items()
+                             if p.is_alive and not p.is_spectator
+                             and pid != target_id and pid != player_id]
+            if other_targets:
+                second_id = random.choice(other_targets)
+                second = room.players[second_id]
+                second_damage = effect.get('damage', 0)
+                second.change_cities(-second_damage)
+                result_msg += '，对 ' + second.name + ' 造成 ' + str(second_damage) + ' 伤害'
+
+        if effect.get('stun'):
+            target.status_effects['stun'] = 2
+            if target_id in room.game_state.actions:
+                room.game_state.actions[target_id] = {
+                    'player_id': target_id,
+                    'action_type': 'skip',
+                    'target_id': None,
+                    'bet': 0,
+                    'timestamp': room.game_state.actions[target_id].get('timestamp', 0)
+                }
+            result_msg += '，' + target.name + ' 下回合无法行动'
+
+    # 防御类
+    elif skill_type == 'defense':
+        heal = effect.get('heal', 0)
+        if heal:
+            player.change_cities(heal)
+            result_msg += '，恢复 ' + str(heal) + ' 城池'
+
+        if effect.get('damage_reduction'):
+            player.status_effects['damage_reduction'] = effect['damage_reduction']
+            result_msg += '，下回合伤害减半'
+
+        if effect.get('reflect'):
+            player.status_effects['reflect'] = effect['reflect']
+            result_msg += '，下回合被攻击时反弹 ' + str(effect['reflect']) + ' 伤害'
+
+        if effect.get('immune'):
+            player.status_effects['immune'] = True
+            result_msg += '，下回合免疫攻击'
+
+        if effect.get('untargetable'):
+            player.status_effects['untargetable'] = True
+            result_msg += '，下回合无法被选中'
+
+    # 资源类
+    elif skill_type == 'resource':
+        heal = effect.get('heal', 0)
+        if heal:
+            player.change_cities(heal)
+            result_msg += '，获得 ' + str(heal) + ' 城池'
+        percent = effect.get('percent', 0)
+        if percent:
+            gain = int(player.cities * percent)
+            player.change_cities(gain)
+            result_msg += '，获得 ' + str(gain) + ' 城池'
+        steal = effect.get('steal', 0)
+        if steal and steal > 0:
+            total = 0
+            for pid, p in room.players.items():
+                if pid != player_id and p.is_alive and not p.is_spectator:
+                    p.change_cities(-steal)
+                    total += steal
+            player.change_cities(total)
+            result_msg += '，从其他玩家处掠夺 ' + str(total) + ' 城池'
+
+        if effect.get('recurring'):
+            rounds = effect.get('recurring', 0)
+            amount = effect.get('amount', 0)
+            player.status_effects['recurring'] = {'rounds': rounds, 'amount': amount}
+            result_msg += '，接下来 ' + str(rounds) + ' 回合每回合获得 ' + str(amount) + ' 城池'
+
+        if effect.get('force_attack'):
+            player.status_effects['force_attack'] = True
+            result_msg += '，下回合必须攻城'
+
+        if effect.get('skip_turn'):
+            player.status_effects['skip_turn'] = True
+            result_msg += '，下回合跳过行动'
+
+    # 特殊类
+    elif skill_type == 'special':
+        if effect.get('swap'):
+            if not target_id:
+                return False, ''
+            target = room.players.get(target_id)
+            if not target or not target.is_alive:
+                return False, ''
+            max_diff = effect.get('max_diff', 100)
+            if abs(player.cities - target.cities) > max_diff:
+                return False, ''
+            player.cities, target.cities = target.cities, player.cities
+            # 交换后3轮内双方不能攻击对方
+            player.status_effects['reverse_no_attack'] = {'target': target_id, 'rounds': 3}
+            target.status_effects['reverse_no_attack'] = {'target': player_id, 'rounds': 3}
+            result_msg += '，与 ' + target.name + ' 交换了城池数，3轮内不能互相攻击'
+
+        elif effect.get('reveal'):
+            if not target_id:
+                return False, ''
+            target = room.players.get(target_id)
+            if not target:
+                return False, ''
+            skill_names = '、'.join([s.get('name', '?') for s in target.skills]) if target.skills else '无'
+            target_action = room.game_state.actions.get(target_id)
+            if target_action:
+                action_names = {'attack': '攻城', 'defend': '守城', 'jungle': '打野', 'duel': '约战', 'repair': '修城', 'alliance': '结盟', 'skip': '跳过'}
+                action_info = action_names.get(target_action['action_type'], target_action['action_type'])
+                if target_action.get('target_id') and target_action['target_id'] in room.players:
+                    action_info += ' → ' + room.players[target_action['target_id']].name
+            else:
+                action_info = '未提交'
+            result_msg += '，侦查 ' + target.name + '：手牌【' + skill_names + '】行动：' + action_info
+
+        elif effect.get('dissolve_all_alliances'):
+            # 离间卡 - 解散所有联盟，3轮内不能联盟
+            for pid, p in room.players.items():
+                p.alliance_with = None
+                p.status_effects['no_alliance'] = 3
+            result_msg += '，解散了所有联盟，3轮内不能联盟'
+
+        elif effect.get('disguise'):
+            player.status_effects['disguise'] = True
+            result_msg += '，下回合行动将显示为随机行动'
+
+        elif effect.get('emergency_heal'):
+            heal_amount = effect['emergency_heal']
+            if player.cities < 0 or not player.is_alive:
+                player.cities += heal_amount
+                if player.cities >= 0:
+                    player.is_alive = True
+                    player.is_spectator = False
+                    result_msg += '，紧急恢复 ' + str(heal_amount) + ' 城池，已复活！'
+                else:
+                    result_msg += '，紧急恢复 ' + str(heal_amount) + ' 城池'
+            else:
+                result_msg += '，城池数正常，急救卡效果未触发'
+
+        else:
+            return False, ''
+
+    else:
+        return False, ''
+
+    # 移除技能卡
+    player.skills.remove(skill_card)
+
+    # 检查阵亡
+    for p in room.players.values():
+        if not p.is_alive and not p.is_spectator:
+            p.is_spectator = True
+
+    # 移除死亡玩家的已提交行动
+    dead_player_ids = [pid for pid, p in room.players.items() if not p.is_alive]
+    for dead_id in dead_player_ids:
+        room.game_state.actions.pop(dead_id, None)
+
+    # 广播
+    _emit('skill_used', {
+        'player_id': player_id,
+        'player_name': player.name,
+        'skill_name': skill_card.get('name', '技能卡'),
+        'message': result_msg,
+        'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
+    }, room=room_id)
+
+    _emit('players_update', {
+        'players': {pid: p.to_dict(is_spectator=False, is_self=(pid == player_id)) for pid, p in room.players.items()}
+    }, room=room_id)
+
+    # 技能卡可能杀死玩家，检查是否所有存活玩家都已提交行动
+    alive = [p for p in room.players.values() if p.is_alive and not p.is_spectator]
+    if len(room.game_state.actions) >= len(alive):
+        _process_round(room_id)
+
+    return True, result_msg
 
 
 # ===== 辅助函数（全部用 socketio.emit） =====
@@ -701,6 +841,19 @@ def _process_round(room_id):
         'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
     }
 
+    # 保存回合历史供AI决策使用（保留最近3轮）
+    if not hasattr(room.game_state, 'round_history'):
+        room.game_state.round_history = []
+    room.game_state.round_history.append({
+        'round': round_result_data['round'],
+        'messages': round_result_data['messages'],
+        'city_changes': round_result_data['city_changes'],
+        'actions': {pid: act for pid, act in round_result_data.get('actions', {}).items()
+                    if not room.players.get(pid, Player(id='', name='', room_id='')).is_ai}  # AI不关心其他AI的行动
+    })
+    # 只保留最近3轮
+    room.game_state.round_history = room.game_state.round_history[-3:]
+
     alive = [p for p in room.players.values() if p.is_alive]
     if len(alive) <= 1:
         winner = alive[0] if alive else None
@@ -724,6 +877,12 @@ def _process_round(room_id):
     # 无约战，直接显示小结
     _emit('round_result', round_result_data, room=room_id)
 
+    # AI预请求：在本轮小结时就发送API请求，下回合直接用缓存结果
+    _prefetch_ai_decisions(room_id)
+
+    # AI玩家自动ready（不需要点击继续按钮）
+    _auto_ready_ai(room_id)
+
     # 拍卖由 on_ready_next_round 触发（玩家点击继续后）
 
 
@@ -737,9 +896,9 @@ def _start_duel(room_id, duel_info):
     target = duel_info['target']
     bet = duel_info['bet']
 
-    # 第6轮后10发转轮，之前6发；前两枪不能有子弹
-    chambers = 10 if room.game_state.round >= 6 else 6
-    bullet_pos = random.randint(2, chambers - 1)
+    # 统一10发转轮，前三枪空包弹
+    chambers = 10
+    bullet_pos = random.randint(3, 9)
 
     room.game_state.duel = {
         'initiator': initiator,
@@ -764,6 +923,8 @@ def _start_duel(room_id, duel_info):
         'bullet_pos': bullet_pos,
         'current_turn': initiator
     }, room=room_id)
+    # 如果发起者是AI，自动开枪
+    _auto_duel_shot(room_id)
 
 
 def _start_auction(room_id):
@@ -798,7 +959,27 @@ def _start_auction(room_id):
         'time_limit': 30
     }, room=room_id)
 
-    threading.Timer(30.0, _end_auction, args=(room_id,)).start()
+    # AI玩家拍卖决策：根据城池和技能卡数量决定是否竞价
+    ai_players = [p for p in alive if p.is_ai and not p.is_spectator]
+    for ai in ai_players:
+        # AI策略：城池>50且技能卡<2张时，有50%概率竞价；否则pass
+        will_bid = (ai.cities > 50 and len(ai.skills) < 2 and random.random() < 0.5)
+        if will_bid:
+            bid_amount = min(ai.cities, room.game_state.auction['current_bid'] + 10)
+            room.game_state.auction['current_bid'] = bid_amount
+            room.game_state.auction['highest_bidder'] = ai.id
+            _emit('auction_updated', {
+                'current_bid': bid_amount,
+                'highest_bidder_name': ai.name
+            }, room=room_id)
+        else:
+            room.game_state.auction['passed_players'].append(ai.id)
+    # 如果所有存活玩家都pass了，直接结束拍卖
+    alive_non_spectator = [p for p in alive if not p.is_spectator]
+    if len(room.game_state.auction['passed_players']) >= len(alive_non_spectator):
+        threading.Timer(2.0, _end_auction, args=(room_id,)).start()
+    else:
+        threading.Timer(30.0, _end_auction, args=(room_id,)).start()
 
 
 def _end_auction(room_id):
@@ -858,10 +1039,289 @@ def _start_next_round(room_id):
             blocked['rounds'] = blocked.get('rounds', 1) - 1
             if blocked['rounds'] <= 0:
                 del p.status_effects['blocked_attack']
+        # 逆转卡效果递减：交换后不能攻击对方
+        reverse_no = p.status_effects.get('reverse_no_attack')
+        if reverse_no:
+            reverse_no['rounds'] = reverse_no.get('rounds', 1) - 1
+            if reverse_no['rounds'] <= 0:
+                del p.status_effects['reverse_no_attack']
+        # 离间卡效果递减：不能联盟
+        no_ally = p.status_effects.get('no_alliance')
+        if no_ally:
+            if isinstance(no_ally, int) and no_ally > 1:
+                p.status_effects['no_alliance'] = no_ally - 1
+            else:
+                p.status_effects.pop('no_alliance', None)
 
     room.game_state.next_round()
     room.game_state._auction_done_this_round = False
     _emit('next_round', _build_game_state(room), room=room_id)
+    # AI玩家自动行动
+    _trigger_ai_actions(room_id)
+
+
+def _prefetch_ai_decisions(room_id):
+    """本轮小结时预请求AI决策，结果缓存到玩家对象，下回合直接使用"""
+    import random as _random
+    from game.ai_player import ai_decide
+
+    room = room_manager.get_room(room_id)
+    if not room or not room.game_state:
+        return
+
+    ai_players = [p for p in room.players.values() if p.is_ai and p.is_alive and not p.is_spectator]
+    if not ai_players:
+        return
+
+    # 标记预请求进行中
+    room.game_state._ai_prefetch_pending = len(ai_players)
+
+    for i, ai_player in enumerate(ai_players):
+        # 错开请求时间，避免429限流
+        delay = 0.3 + i * 1.5 + _random.uniform(0, 0.3)
+        pid = ai_player.id
+
+        def _prefetch(pid=pid, d=delay):
+            r = room_manager.get_room(room_id)
+            if not r or not r.game_state:
+                return
+            p = r.players.get(pid)
+            if not p or not p.is_alive:
+                # 减少pending计数
+                if hasattr(r.game_state, '_ai_prefetch_pending'):
+                    r.game_state._ai_prefetch_pending = max(0, r.game_state._ai_prefetch_pending - 1)
+                return
+
+            config = p.status_effects.get('ai_config', {})
+            if not config.get('api_key'):
+                if hasattr(r.game_state, '_ai_prefetch_pending'):
+                    r.game_state._ai_prefetch_pending = max(0, r.game_state._ai_prefetch_pending - 1)
+                return
+
+            print(f'[AI] prefetch: {p.name} 开始预请求决策')
+            decision = ai_decide(r, pid, config)
+            print(f'[AI] prefetch: {p.name} 预请求完成: {decision}')
+
+            # 缓存决策到玩家对象，减少pending计数
+            p = r.players.get(pid)
+            if p:
+                p.status_effects['_ai_cached_decision'] = decision
+            if r and hasattr(r.game_state, '_ai_prefetch_pending'):
+                r.game_state._ai_prefetch_pending = max(0, r.game_state._ai_prefetch_pending - 1)
+
+        threading.Timer(delay, _prefetch).start()
+
+
+def _auto_ready_ai(room_id):
+    """AI玩家自动发送ready_next_round（不需要点击继续按钮）"""
+    room = room_manager.get_room(room_id)
+    if not room or not room.game_state:
+        return
+    gs = room.game_state
+    if not hasattr(gs, 'ready_players'):
+        gs.ready_players = set()
+    ai_players = [p for p in room.players.values() if p.is_ai and p.is_alive and not p.is_spectator]
+    for ai in ai_players:
+        gs.ready_players.add(ai.id)
+    # 检查是否所有存活玩家都ready了
+    alive = [p for p in room.players.values() if p.is_alive and not p.is_spectator]
+    alive_ready = [pid for pid in gs.ready_players if pid in {p.id for p in alive}]
+    if len(alive_ready) >= len(alive):
+        gs.ready_players = set()
+        # 检查拍卖（第10轮起每5轮）
+        if gs.round >= 10 and (gs.round - 10) % 5 == 0 and not getattr(gs, '_auction_done_this_round', False):
+            gs._auction_done_this_round = True
+            _start_auction(room_id)
+        else:
+            _start_next_round(room_id)
+
+
+def _trigger_ai_actions(room_id):
+    """触发AI玩家的自动行动"""
+    import random as _random
+    from game.ai_player import ai_decide
+
+    room = room_manager.get_room(room_id)
+    if not room or not room.game_state:
+        return
+    if room.game_state.phase != GamePhase.ACTION:
+        return
+
+    # 只触发尚未提交行动的AI玩家
+    ai_players = [p for p in room.players.values() if p.is_ai and p.is_alive and not p.is_spectator and not p.action]
+    print(f'[AI] trigger_ai_actions: room={room_id}, phase={room.game_state.phase.value}, ai_count={len(ai_players)}, all_players={[(p.id, p.is_ai, p.action) for p in room.players.values()]}')
+    if not ai_players:
+        return
+
+    for i, ai_player in enumerate(ai_players):
+        # 检查是否有预请求缓存的决策
+        cached = ai_player.status_effects.pop('_ai_cached_decision', None)
+        pid = ai_player.id
+
+        def _apply_ai_decision(pid, decision, r, p):
+            """执行AI决策（技能卡+提交行动），返回是否成功"""
+            # API调用失败时通知房间内玩家
+            ai_error = decision.pop('_ai_error', None)
+            ai_raw = decision.pop('_ai_raw', None)
+            ai_raw_resp = decision.pop('_ai_raw_response', None)
+            if ai_error:
+                _emit('ai_api_error', {
+                    'ai_name': p.name,
+                    'error': ai_error,
+                    'raw_content': ai_raw or '',
+                    'raw_response': ai_raw_resp or ''
+                }, room=room_id)
+
+            # AI使用技能卡
+            if decision.get('use_skill') and p.skills:
+                skill_name = decision.get('skill_name', '')
+                skill_to_use = None
+                if skill_name:
+                    for s in p.skills:
+                        if s.get('name') == skill_name:
+                            skill_to_use = s
+                            break
+                if not skill_to_use:
+                    skill_to_use = p.skills[0]
+
+                skill_id = skill_to_use.get('skill_type') or skill_to_use.get('id')
+                skill_target_id = decision.get('skill_target_id')
+
+                skill_type = skill_to_use.get('type', '')
+                needs_target = skill_type in _SKILL_NEEDS_TARGET and skill_id not in _SKILL_NO_TARGET_IDS
+
+                if needs_target and not skill_target_id:
+                    alive_targets = [tid for tid, tp in r.players.items()
+                                    if tp.is_alive and not tp.is_spectator and tid != pid]
+                    if alive_targets:
+                        skill_target_id = _random.choice(alive_targets)
+                    else:
+                        skill_target_id = None
+
+                if not needs_target or skill_target_id:
+                    _apply_skill_card(room_id, pid, skill_id, skill_target_id)
+                    p = r.players.get(pid)
+                    if not p or not p.is_alive:
+                        return False
+
+            action_type = decision.get('action', 'defend')
+            target_id = decision.get('target_id')
+            bet = decision.get('bet', 0) or 0
+
+            valid_actions = ['attack', 'defend', 'jungle', 'repair', 'alliance', 'dissolve_alliance', 'duel']
+            if action_type not in valid_actions:
+                action_type = 'defend'
+            if action_type in ['repair', 'alliance', 'dissolve_alliance', 'duel'] and r.game_state.round < 3:
+                action_type = 'defend'
+            if action_type in ['attack', 'alliance'] and target_id:
+                target = r.players.get(target_id)
+                if not target or not target.is_alive or target.is_spectator:
+                    action_type = 'defend'
+                    target_id = None
+
+            ok = room_manager.submit_action(room_id, pid, action_type, target_id, bet)
+            print(f'[AI] {p.name} submit_action({action_type}, target={target_id}) => ok={ok}')
+            if ok:
+                action_detail = {
+                    'type': action_type,
+                    'target_id': target_id,
+                    'bet': bet,
+                }
+                if target_id and target_id in r.players:
+                    action_detail['target_name'] = r.players[target_id].name
+                _emit('player_action_ready', {
+                    'player_id': pid,
+                    'player_name': p.name,
+                    'action_type': action_type,
+                    'action_detail': action_detail
+                }, room=room_id)
+
+                alive = [pp for pp in r.players.values() if pp.is_alive and not pp.is_spectator]
+                if len(r.game_state.actions) >= len(alive):
+                    _process_round(room_id)
+            return ok
+
+        if cached:
+            # 有缓存决策，立即使用，无需等待
+            print(f'[AI] {ai_player.name} 使用缓存决策: {cached}')
+            r = room_manager.get_room(room_id)
+            if r and r.game_state and r.game_state.phase == GamePhase.ACTION:
+                p = r.players.get(pid)
+                if p and p.is_alive:
+                    _apply_ai_decision(pid, cached, r, p)
+        else:
+            # 无缓存：检查是否有预请求正在进行
+            prefetch_pending = getattr(room.game_state, '_ai_prefetch_pending', 0)
+
+            if prefetch_pending > 0:
+                # 有预请求在进行中，等它完成再检查，超时后fallback到直接请求
+                def _wait_for_cache(pid=pid, attempt=0):
+                    r = room_manager.get_room(room_id)
+                    if not r or not r.game_state or r.game_state.phase != GamePhase.ACTION:
+                        return
+                    p = r.players.get(pid)
+                    if not p or not p.is_alive:
+                        return
+
+                    # 检查缓存是否已到达
+                    cached_now = p.status_effects.pop('_ai_cached_decision', None)
+                    if cached_now:
+                        print(f'[AI] {p.name} 等到缓存决策: {cached_now}')
+                        _apply_ai_decision(pid, cached_now, r, p)
+                    elif attempt < 6:
+                        # 预请求还在进行中，500ms后重试（最多等3秒）
+                        print(f'[AI] {p.name} 等待预请求缓存... (attempt={attempt+1})')
+                        threading.Timer(0.5, _wait_for_cache, args=(pid, attempt+1)).start()
+                    else:
+                        # 超时，fallback到直接API请求
+                        config = p.status_effects.get('ai_config', {})
+                        if not config.get('api_key'):
+                            print(f'[AI] {p.name} 无API配置，跳过')
+                            return
+                        print(f'[AI] {p.name} 预请求超时，fallback直接请求')
+                        decision = ai_decide(r, pid, config)
+                        print(f'[AI] {p.name} 决策完成: {decision}')
+                        _apply_ai_decision(pid, decision, r, p)
+
+                _wait_for_cache()
+            else:
+                # 没有预请求（第一轮或预请求未触发），直接调用API
+                config = ai_player.status_effects.get('ai_config', {})
+                if config.get('api_key'):
+                    print(f'[AI] {ai_player.name} 无预请求缓存，直接请求API')
+
+                    def _direct_request(pid=pid):
+                        r = room_manager.get_room(room_id)
+                        if not r or not r.game_state or r.game_state.phase != GamePhase.ACTION:
+                            return
+                        p = r.players.get(pid)
+                        if not p or not p.is_alive:
+                            return
+                        decision = ai_decide(r, pid, config)
+                        print(f'[AI] {p.name} 决策完成: {decision}')
+                        _apply_ai_decision(pid, decision, r, p)
+
+                    threading.Timer(0.3, _direct_request).start()
+                else:
+                    print(f'[AI] {ai_player.name} 无API配置，跳过')
+
+
+def _auto_duel_shot(room_id):
+    """AI约战时自动开一枪"""
+    import threading, random
+    room = room_manager.get_room(room_id)
+    if not room or not room.game_state or not room.game_state.duel:
+        return
+    duel = room.game_state.duel
+    current_turn = duel.get('current_turn')
+    if not current_turn:
+        return
+    player = room.players.get(current_turn)
+    if player and player.is_ai:
+        # 延迟0.5-1秒后自动开1枪，避免同步调用问题
+        def _shoot():
+            _do_duel_shot(room_id, current_turn, 1)
+        threading.Timer(random.uniform(0.5, 1.0), _shoot).start()
 
 
 def _do_duel_shot(room_id, player_id, shots):
@@ -950,6 +1410,10 @@ def _do_duel_shot(room_id, player_id, shots):
                 pending['players'] = {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
                 _emit('round_result', pending, room=room_id)
                 room.game_state._pending_round_result = None
+                # AI预请求：约战结束后也预请求决策
+                _prefetch_ai_decisions(room_id)
+                # AI自动ready
+                _auto_ready_ai(room_id)
             room.game_state.phase = GamePhase.MEETING
             if hasattr(room.game_state, 'ready_players'):
                 room.game_state.ready_players = set()
@@ -961,3 +1425,5 @@ def _do_duel_shot(room_id, player_id, shots):
             'fired': fired,
             'remaining': chambers - fired
         }, room=room_id)
+        # AI轮到开枪时自动开一枪
+        _auto_duel_shot(room_id)

@@ -16,6 +16,8 @@ import urllib.parse
 from datetime import datetime, timezone
 import bcrypt
 import pymongo
+from cryptography.fernet import Fernet
+import base64
 from flask import Flask, render_template, request, jsonify, make_response, redirect, url_for
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
@@ -153,6 +155,39 @@ def _mongo_update_field(username, field, value):
     if not _use_mongodb():
         return
     _mongo_users.update_one({'username': username}, {'$set': {field: value}})
+
+
+# ===== AI 配置加密 =====
+def _get_fernet_key():
+    """从 SECRET_KEY 派生 Fernet 加密密钥"""
+    secret = app.config.get('SECRET_KEY', 'citywar-secret-key-2024')
+    # SHA256 取前32字节，base64编码为Fernet所需格式
+    key = hashlib.sha256(secret.encode('utf-8')).digest()[:32]
+    # Fernet需要32字节url-safe base64编码的key，但实际Fernet key是32字节
+    # 使用 base64 url-safe 编码
+    return base64.urlsafe_b64encode(key)
+
+
+def _encrypt_api_key(api_key):
+    """加密 API Key"""
+    if not api_key:
+        return ''
+    try:
+        f = Fernet(_get_fernet_key())
+        return f.encrypt(api_key.encode('utf-8')).decode('utf-8')
+    except Exception:
+        return ''
+
+
+def _decrypt_api_key(encrypted):
+    """解密 API Key"""
+    if not encrypted:
+        return ''
+    try:
+        f = Fernet(_get_fernet_key())
+        return f.decrypt(encrypted.encode('utf-8')).decode('utf-8')
+    except Exception:
+        return ''
 
 
 # 初始化 MongoDB 并加载用户数据
@@ -605,6 +640,63 @@ def api_update_profile():
 
     return jsonify({'success': True, 'message': '修改成功', 'display_name': u['display_name']})
 
+
+@app.route('/api/ai/config', methods=['GET'])
+def api_get_ai_config():
+    """获取当前用户的AI配置"""
+    username = _check_login()
+    if not username or username not in users:
+        return jsonify({'success': False, 'message': '未登录'}), 401
+    u = users[username]
+    if u.get('is_guest'):
+        return jsonify({'success': False, 'message': '游客账号不支持AI配置'}), 400
+
+    ai_config = u.get('ai_config', {})
+    # 解密 API Key
+    encrypted_key = ai_config.get('api_key_encrypted', '')
+    api_key = _decrypt_api_key(encrypted_key)
+
+    return jsonify({
+        'success': True,
+        'config': {
+            'base_url': ai_config.get('base_url', 'https://api.openai.com/v1'),
+            'api_key': api_key,
+            'model': ai_config.get('model', 'gpt-4o-mini'),
+        }
+    })
+
+
+@app.route('/api/ai/config', methods=['POST'])
+def api_update_ai_config():
+    """更新当前用户的AI配置"""
+    username = _check_login()
+    if not username or username not in users:
+        return jsonify({'success': False, 'message': '未登录'}), 401
+    u = users[username]
+    if u.get('is_guest'):
+        return jsonify({'success': False, 'message': '游客账号不支持AI配置'}), 400
+
+    data = request.get_json() or {}
+    base_url = data.get('base_url', 'https://api.openai.com/v1').strip()
+    api_key = data.get('api_key', '').strip()
+    model = data.get('model', 'gpt-4o-mini').strip()
+
+    # 加密存储 API Key
+    encrypted_key = _encrypt_api_key(api_key) if api_key else ''
+
+    ai_config = {
+        'base_url': base_url,
+        'api_key_encrypted': encrypted_key,
+        'model': model,
+    }
+
+    u['ai_config'] = ai_config
+    _mongo_update_field(username, 'ai_config', ai_config)
+    _save_users()
+
+    return jsonify({'success': True, 'message': 'AI配置已保存'})
+
+
 ERROR_PAGE_STYLE = '''
 <style>
 :root {
@@ -705,6 +797,10 @@ def api_rooms():
         return jsonify({'success': False, 'message': result[1]}), 403
 
     room_id, player = result
+    # 关联登录用户名
+    login_user = _check_login()
+    if login_user:
+        player.username = login_user
     return jsonify({
         'success': True,
         'room': {'id': room_id, 'name': room_manager.rooms[room_id].name},
@@ -722,7 +818,12 @@ def api_join_room(room_id):
     client_ip = request.remote_addr
     player = room_manager.join_room(room_id, player_name, 'p_' + uuid.uuid4().hex[:12], client_ip)
     if not player:
-        return jsonify({'success': False, 'message': '房间不存在、已满或该设备已在此房间中'}), 400
+        return jsonify({'success': False, 'message': '房间不存在或已满'}), 400
+
+    # 关联登录用户名
+    login_user = _check_login()
+    if login_user:
+        player.username = login_user
 
     return jsonify({
         'success': True,

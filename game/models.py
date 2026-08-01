@@ -35,11 +35,13 @@ class Player:
     id: str
     name: str
     room_id: str
-    cities: int = 100
+    cities: int = 250
     is_alive: bool = True
     is_host: bool = False
     is_ready: bool = False
     is_spectator: bool = False
+    is_ai: bool = False
+    username: str = ''  # 关联的登录用户名
     skills: List[Dict] = field(default_factory=list)
     action: Optional[Dict] = None
     alliance_with: Optional[str] = None
@@ -47,6 +49,7 @@ class Player:
     alliance_damages: int = 0
     repair_active: bool = False
     status_effects: Dict = field(default_factory=dict)  # 活跃状态效果
+    action_history: List[str] = field(default_factory=list)  # 行动历史（用于连续操作限制）
     created_at: float = field(default_factory=time.time)
     
     def to_dict(self, is_spectator: bool = False, is_self: bool = False) -> Dict:
@@ -59,6 +62,7 @@ class Player:
             "is_host": self.is_host,
             "is_ready": self.is_ready,
             "is_spectator": self.is_spectator,
+            "is_ai": self.is_ai,
             "alliance_with": self.alliance_with,
             "repair_active": self.repair_active,
         }
@@ -112,6 +116,7 @@ class Room:
     game_state: Optional['GameState'] = None
     created_at: float = field(default_factory=time.time)
     max_players: int = 8
+    allow_join_after_start: bool = False  # 是否允许游戏开始后加入
     
     def to_dict(self, player_id: str = None) -> Dict:
         """转换为字典"""
@@ -127,6 +132,7 @@ class Room:
             "players": {pid: p.to_dict(is_spectator, is_self=(pid == player_id)) for pid, p in self.players.items()},
             "player_count": len(self.players),
             "max_players": self.max_players,
+            "allow_join_after_start": self.allow_join_after_start,
             "game_state": self.game_state.to_dict(is_spectator) if self.game_state else None,
             "created_at": self.created_at,
         }

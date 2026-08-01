@@ -125,8 +125,8 @@ SKILL_CARDS: Dict[str, Dict] = {
     "sow_discord": {
         "name": "离间卡",
         "type": "special",
-        "description": "指定两名其他玩家，他们下回合无法互相攻击",
-        "effect": {"prevent_attack": 2}
+        "description": "解散所有联盟，3轮内不能联盟",
+        "effect": {"dissolve_all_alliances": True, "no_alliance_rounds": 3}
     },
     "recon": {
         "name": "侦查卡",
@@ -149,8 +149,132 @@ SKILL_CARDS: Dict[str, Dict] = {
     "reverse": {
         "name": "逆转卡",
         "type": "special",
-        "description": "与一名玩家交换城池数（双方需>50城池，且城池差不超过30）",
-        "effect": {"swap": True, "min_cities": 50, "max_diff": 30}
+        "description": "与一名玩家交换城池数（城池差不超过100），交换后3轮内不能攻击对方",
+        "effect": {"swap": True, "max_diff": 100}
+    },
+
+    # ===== 新增技能卡（第二批） =====
+
+    # 攻击类
+    "plus_damage": {
+        "name": "+5伤卡",
+        "type": "attack",
+        "description": "使用后每轮伤害增加5",
+        "effect": {"permanent_damage_bonus": 5}
+    },
+    "invulnerable": {
+        "name": "无懈可击卡",
+        "type": "defense",
+        "description": "当有玩家对你使用有害技能卡时，可免除效果",
+        "effect": {"counter_skill": True}
+    },
+    "steal_card": {
+        "name": "瞒天过海卡",
+        "type": "special",
+        "description": "消耗30城池偷走指定玩家一张卡",
+        "effect": {"steal_card": True, "cost": 30}
+    },
+    "immortal_totem": {
+        "name": "不死图腾卡",
+        "type": "defense",
+        "description": "血量<0时+50血，3局内减伤20%+每轮+5",
+        "effect": {"emergency_heal": 50, "post_save_reduction": 0.2, "post_save_heal": 5, "post_save_rounds": 3}
+    },
+    "fortress": {
+        "name": "磐石堡垒卡",
+        "type": "defense",
+        "description": "定值减伤10",
+        "effect": {"flat_damage_reduction": 10}
+    },
+    "freeze": {
+        "name": "呆若木鸡卡",
+        "type": "attack",
+        "description": "对方这回合无法行动",
+        "effect": {"stun": True}
+    },
+    "arrow_rain": {
+        "name": "万箭齐发卡",
+        "type": "attack",
+        "description": "对其他所有人造成15+3n伤害，获得伤害1/3城池",
+        "effect": {"aoe_damage": 15, "aoe_per_player": 3}
+    },
+    "delay_troops": {
+        "name": "撒豆成兵卡",
+        "type": "resource",
+        "description": "城池-20，3轮后+80",
+        "effect": {"cost": 20, "delayed_heal": 80, "delay_rounds": 3}
+    },
+    "retreat": {
+        "name": "退退退卡",
+        "type": "defense",
+        "description": "本轮无法受攻击伤害且反弹50",
+        "effect": {"immune": True, "reflect": 50}
+    },
+    "fierce_attack": {
+        "name": "猛攻卡",
+        "type": "attack",
+        "description": "攻击时单次伤害×3",
+        "effect": {"attack_multiplier": 3}
+    },
+    "regen": {
+        "name": "回血卡",
+        "type": "defense",
+        "description": "每轮+5血",
+        "effect": {"recurring_heal": 5}
+    },
+    "double_action": {
+        "name": "二般人卡",
+        "type": "special",
+        "description": "一轮可行动两次",
+        "effect": {"extra_action": True}
+    },
+    "lifesteal": {
+        "name": "吸血卡",
+        "type": "attack",
+        "description": "每次攻击吸取5%总血量",
+        "effect": {"lifesteal_percent": 0.05}
+    },
+    "upgrade": {
+        "name": "升级卡",
+        "type": "special",
+        "description": "升级一次技能(×2)",
+        "effect": {"upgrade_skill": True}
+    },
+    "treasure": {
+        "name": "聚宝盆卡",
+        "type": "resource",
+        "description": "城池收益永久×1.25",
+        "effect": {"income_multiplier": 1.25}
+    },
+    "equal_trade": {
+        "name": "等价交换卡",
+        "type": "resource",
+        "description": "-75城获得两张技能卡",
+        "effect": {"cost": 75, "bonus_cards": 2}
+    },
+    "damage_boost": {
+        "name": "加伤卡",
+        "type": "attack",
+        "description": "攻击伤害永久+25%",
+        "effect": {"permanent_attack_bonus": 0.25}
+    },
+    "double_gain": {
+        "name": "以逸待劳卡",
+        "type": "resource",
+        "description": "获得收益时×2",
+        "effect": {"double_gain": True}
+    },
+    "tribute": {
+        "name": "顺手牵羊卡",
+        "type": "special",
+        "description": "让对方给你一张技能卡",
+        "effect": {"demand_card": True}
+    },
+    "protagonist": {
+        "name": "主角光环卡",
+        "type": "defense",
+        "description": "永久减伤20%",
+        "effect": {"permanent_reduction": 0.2}
     }
 }
 
@@ -394,18 +518,14 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
         })
 
     elif skill_type_key == "sow_discord":
-        # 离间卡 - 两名玩家无法互相攻击
-        targets = kwargs.get("targets", [])
-        if len(targets) >= 2:
-            for tid in targets[:2]:
-                target = game_state.get_player(tid)
-                if target:
-                    target.status_effects["discord"] = 1
-            result["effects"].append({
-                "type": "status",
-                "targets": targets[:2],
-                "status": "discord"
-            })
+        # 离间卡 - 解散所有联盟，3轮内不能联盟
+        for pid, p in game_state.players.items():
+            p.alliance_with = None
+            p.status_effects['no_alliance'] = 3
+        result["effects"].append({
+            "type": "dissolve_all_alliances",
+            "no_alliance_rounds": 3
+        })
 
     elif skill_type_key == "recon":
         # 侦查卡 - 查看玩家手牌和意图
@@ -442,13 +562,16 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
             })
 
     elif skill_type_key == "reverse":
-        # 逆转卡 - 交换城池数（限制城池差）
+        # 逆转卡 - 交换城池数（城池差不超过100），交换后3轮内不能攻击对方
         if target_id:
             target = game_state.get_player(target_id)
-            max_diff = effect.get('max_diff', 30)
-            if target and player.cities > 50 and target.cities > 50:
+            max_diff = effect.get('max_diff', 100)
+            if target:
                 if abs(player.cities - target.cities) <= max_diff:
                     player.cities, target.cities = target.cities, player.cities
+                    # 交换后3轮内双方不能攻击对方
+                    player.status_effects['reverse_no_attack'] = {'target': target_id, 'rounds': 3}
+                    target.status_effects['reverse_no_attack'] = {'target': player_id, 'rounds': 3}
                     result["effects"].append({
                         "type": "swap",
                         "target": target_id
@@ -461,7 +584,273 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
             else:
                 result["effects"].append({
                     "type": "message",
-                    "message": "双方城池数均需大于50"
+                    "message": "目标玩家不存在"
                 })
-    
+
+    # ===== 新增技能卡执行逻辑（第二批） =====
+
+    elif skill_type_key == "plus_damage":
+        # +5伤卡 - 每轮伤害永久+5
+        player.status_effects["permanent_damage_bonus"] = player.status_effects.get("permanent_damage_bonus", 0) + 5
+        result["effects"].append({
+            "type": "permanent_buff",
+            "status": "permanent_damage_bonus",
+            "value": 5
+        })
+
+    elif skill_type_key == "invulnerable":
+        # 无懈可击卡 - 被动：对有害技能卡免疫（标记，实际触发在 manager.py 的 process_round 中处理）
+        player.status_effects["invulnerable"] = True
+        result["effects"].append({
+            "type": "buff",
+            "status": "invulnerable"
+        })
+
+    elif skill_type_key == "steal_card":
+        # 瞒天过海卡 - 消耗30城池偷走指定玩家一张卡
+        cost = skill["effect"].get("cost", 30)
+        if player.cities >= cost:
+            player.cities -= cost
+            if target_id:
+                target = game_state.get_player(target_id)
+                if target and target.skills:
+                    import random
+                    stolen = random.choice(target.skills)
+                    target.remove_skill(stolen.get('id', ''))
+                    player.skills.append(stolen)
+                    result["effects"].append({
+                        "type": "steal_card",
+                        "target": target_id,
+                        "cost": cost
+                    })
+                else:
+                    result["effects"].append({
+                        "type": "message",
+                        "message": "目标玩家没有可偷的卡"
+                    })
+            else:
+                result["effects"].append({
+                    "type": "message",
+                    "message": "未指定目标玩家"
+                })
+        else:
+            result["effects"].append({
+                "type": "message",
+                "message": "城池不足，需要{}城池".format(cost)
+            })
+
+    elif skill_type_key == "immortal_totem":
+        # 不死图腾卡 - 血量<0时+50血，3局内减伤20%+每轮+5（被动触发，标记）
+        player.status_effects["immortal_totem"] = {
+            "emergency_heal": 50,
+            "post_save_reduction": 0.2,
+            "post_save_heal": 5,
+            "post_save_rounds": 3
+        }
+        result["effects"].append({
+            "type": "buff",
+            "status": "immortal_totem",
+            "duration": 3
+        })
+
+    elif skill_type_key == "fortress":
+        # 磐石堡垒卡 - 定值减伤10（永久）
+        player.status_effects["flat_damage_reduction"] = player.status_effects.get("flat_damage_reduction", 0) + 10
+        result["effects"].append({
+            "type": "permanent_buff",
+            "status": "flat_damage_reduction",
+            "value": 10
+        })
+
+    elif skill_type_key == "freeze":
+        # 呆若木鸡卡 - 对方这回合无法行动
+        if target_id:
+            target = game_state.get_player(target_id)
+            if target:
+                target.status_effects["stun"] = 2
+                result["effects"].append({
+                    "type": "status",
+                    "target": target_id,
+                    "status": "stun"
+                })
+
+    elif skill_type_key == "arrow_rain":
+        # 万箭齐发卡 - 对其他所有人造成15+3n伤害，获得伤害1/3城池
+        base_dmg = skill["effect"].get("aoe_damage", 15)
+        per_player = skill["effect"].get("aoe_per_player", 3)
+        n_other = sum(1 for pid, p in game_state.players.items() if pid != player_id and p.is_alive)
+        total_dmg = base_dmg + per_player * n_other
+        total_dealt = 0
+        for pid, p in game_state.players.items():
+            if pid != player_id and p.is_alive:
+                p.cities -= total_dmg
+                total_dealt += total_dmg
+        player.cities += total_dealt // 3
+        result["effects"].append({
+            "type": "aoe_damage",
+            "damage_per_target": total_dmg,
+            "targets_hit": n_other,
+            "cities_gained": total_dealt // 3
+        })
+
+    elif skill_type_key == "delay_troops":
+        # 撒豆成兵卡 - 城池-20，3轮后+80
+        cost = skill["effect"].get("cost", 20)
+        delayed_heal = skill["effect"].get("delayed_heal", 80)
+        delay_rounds = skill["effect"].get("delay_rounds", 3)
+        player.cities -= cost
+        player.status_effects["delay_troops"] = {
+            "heal": delayed_heal,
+            "rounds_left": delay_rounds
+        }
+        result["effects"].append({
+            "type": "delayed_effect",
+            "cost": cost,
+            "delayed_heal": delayed_heal,
+            "delay_rounds": delay_rounds
+        })
+
+    elif skill_type_key == "retreat":
+        # 退退退卡 - 本轮无法受攻击伤害且反弹50
+        player.status_effects["retreat"] = 1
+        result["effects"].append({
+            "type": "buff",
+            "status": "retreat"
+        })
+
+    elif skill_type_key == "fierce_attack":
+        # 猛攻卡 - 攻击时单次伤害×3
+        player.status_effects["attack_multiplier"] = player.status_effects.get("attack_multiplier", 1) * 3
+        result["effects"].append({
+            "type": "permanent_buff",
+            "status": "attack_multiplier",
+            "value": 3
+        })
+
+    elif skill_type_key == "regen":
+        # 回血卡 - 每轮+5血（永久）
+        player.status_effects["recurring_heal"] = player.status_effects.get("recurring_heal", 0) + 5
+        result["effects"].append({
+            "type": "permanent_buff",
+            "status": "recurring_heal",
+            "value": 5
+        })
+
+    elif skill_type_key == "double_action":
+        # 二般人卡 - 一轮可行动两次
+        player.status_effects["extra_action"] = 1
+        result["effects"].append({
+            "type": "buff",
+            "status": "extra_action"
+        })
+
+    elif skill_type_key == "lifesteal":
+        # 吸血卡 - 每次攻击吸取5%总血量（永久标记）
+        lifesteal_pct = skill["effect"].get("lifesteal_percent", 0.05)
+        player.status_effects["lifesteal_percent"] = player.status_effects.get("lifesteal_percent", 0) + lifesteal_pct
+        result["effects"].append({
+            "type": "permanent_buff",
+            "status": "lifesteal_percent",
+            "value": lifesteal_pct
+        })
+
+    elif skill_type_key == "upgrade":
+        # 升级卡 - 升级一次技能(×2)
+        target_skill = kwargs.get("upgrade_target")
+        if target_skill:
+            # 对指定技能效果翻倍（通过 status_effects 标记）
+            player.status_effects["upgrade_target"] = target_skill
+            player.status_effects["upgrade_multiplier"] = 2
+            result["effects"].append({
+                "type": "upgrade",
+                "target_skill": target_skill,
+                "multiplier": 2
+            })
+        else:
+            result["effects"].append({
+                "type": "message",
+                "message": "未指定要升级的技能"
+            })
+
+    elif skill_type_key == "treasure":
+        # 聚宝盆卡 - 城池收益永久×1.25
+        player.status_effects["income_multiplier"] = player.status_effects.get("income_multiplier", 1) * 1.25
+        result["effects"].append({
+            "type": "permanent_buff",
+            "status": "income_multiplier",
+            "value": 1.25
+        })
+
+    elif skill_type_key == "equal_trade":
+        # 等价交换卡 - -75城获得两张技能卡
+        cost = skill["effect"].get("cost", 75)
+        bonus_cards = skill["effect"].get("bonus_cards", 2)
+        if player.cities >= cost:
+            player.cities -= cost
+            for _ in range(bonus_cards):
+                new_card = get_random_skill()
+                player.skills.append(new_card)
+            result["effects"].append({
+                "type": "trade",
+                "cost": cost,
+                "cards_gained": bonus_cards
+            })
+        else:
+            result["effects"].append({
+                "type": "message",
+                "message": "城池不足，需要{}城池".format(cost)
+            })
+
+    elif skill_type_key == "damage_boost":
+        # 加伤卡 - 攻击伤害永久+25%
+        bonus = skill["effect"].get("permanent_attack_bonus", 0.25)
+        player.status_effects["permanent_attack_bonus"] = player.status_effects.get("permanent_attack_bonus", 0) + bonus
+        result["effects"].append({
+            "type": "permanent_buff",
+            "status": "permanent_attack_bonus",
+            "value": bonus
+        })
+
+    elif skill_type_key == "double_gain":
+        # 以逸待劳卡 - 获得收益时×2（永久标记）
+        player.status_effects["double_gain"] = True
+        result["effects"].append({
+            "type": "permanent_buff",
+            "status": "double_gain"
+        })
+
+    elif skill_type_key == "tribute":
+        # 顺手牵羊卡 - 让对方给你一张技能卡
+        if target_id:
+            target = game_state.get_player(target_id)
+            if target and target.skills:
+                import random
+                given = random.choice(target.skills)
+                target.remove_skill(given.get('id', ''))
+                player.skills.append(given)
+                result["effects"].append({
+                    "type": "demand_card",
+                    "target": target_id
+                })
+            else:
+                result["effects"].append({
+                    "type": "message",
+                    "message": "目标玩家没有可给的卡"
+                })
+        else:
+            result["effects"].append({
+                "type": "message",
+                "message": "未指定目标玩家"
+            })
+
+    elif skill_type_key == "protagonist":
+        # 主角光环卡 - 永久减伤20%
+        reduction = skill["effect"].get("permanent_reduction", 0.2)
+        player.status_effects["permanent_reduction"] = player.status_effects.get("permanent_reduction", 0) + reduction
+        result["effects"].append({
+            "type": "permanent_buff",
+            "status": "permanent_reduction",
+            "value": reduction
+        })
+
     return result

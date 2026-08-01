@@ -162,6 +162,125 @@
             .catch(function () { toast('网络错误', 'error'); });
     };
 
+    // ===== AI 配置 Section =====
+    var AI_CONFIG_KEY = 'citywar_ai_config';
+    var AI_DEFAULTS = { base_url: 'https://api.openai.com/v1', api_key: '', model: 'gpt-4o-mini' };
+
+    function getAuthToken() {
+        return localStorage.getItem('auth_token') || '';
+    }
+
+    function renderAIConfigSection(container) {
+        // 先渲染骨架
+        container.innerHTML =
+            '<div class="sp-section-header">' +
+                '<svg class="sp-section-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>' +
+                '<span>AI 配置</span>' +
+            '</div>' +
+            (isLocalMode ? '<div class="sp-settings-group-label" style="color:var(--text-tertiary);font-size:12px;margin-bottom:8px">本地模式：配置保存在浏览器本地</div>' : '') +
+            '<div class="sp-settings-group">' +
+                '<div class="sp-settings-group-label" style="color:var(--text-tertiary);font-size:13px;margin-bottom:12px">使用 OpenAI 兼容格式（支持 OpenAI、DeepSeek、通义千问等兼容服务）</div>' +
+                '<div class="field">' +
+                    '<label class="field-label"><span>API Base URL</span></label>' +
+                    '<input type="text" id="aiBaseUrl" class="field-input" placeholder="https://api.openai.com/v1" autocomplete="off">' +
+                '</div>' +
+                '<div class="field">' +
+                    '<label class="field-label"><span>API Key</span></label>' +
+                    '<div class="field-input-wrap">' +
+                        '<input type="password" id="aiApiKey" class="field-input field-input-pw" placeholder="sk-..." autocomplete="off">' +
+                        '<button class="pw-toggle" onclick="togglePw(\'aiApiKey\', this)" title="显示/隐藏密码">' +
+                            '<svg class="pw-eye-open" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>' +
+                            '<svg class="pw-eye-closed" viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>' +
+                        '</button>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="field">' +
+                    '<label class="field-label"><span>模型名称</span></label>' +
+                    '<input type="text" id="aiModel" class="field-input" placeholder="gpt-4o-mini" autocomplete="off">' +
+                '</div>' +
+            '</div>' +
+            '<button class="btn btn-primary sp-save-btn" onclick="settingsPageSaveAIConfig()">保存</button>';
+
+        // 加载配置：登录用户从服务器，本地模式从localStorage
+        if (isLocalMode) {
+            try {
+                var raw = localStorage.getItem(AI_CONFIG_KEY);
+                if (raw) {
+                    var c = JSON.parse(raw);
+                    var el;
+                    el = document.getElementById('aiBaseUrl');
+                    if (el) el.value = c.base_url || AI_DEFAULTS.base_url;
+                    el = document.getElementById('aiApiKey');
+                    if (el) el.value = c.api_key || '';
+                    el = document.getElementById('aiModel');
+                    if (el) el.value = c.model || AI_DEFAULTS.model;
+                }
+            } catch (e) {}
+        } else {
+            fetch('/api/ai/config', { headers: { 'Authorization': 'Bearer ' + getAuthToken() } })
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (data.success && data.config) {
+                        var c = data.config;
+                        var el;
+                        el = document.getElementById('aiBaseUrl');
+                        if (el) el.value = c.base_url || AI_DEFAULTS.base_url;
+                        el = document.getElementById('aiApiKey');
+                        if (el) el.value = c.api_key || '';
+                        el = document.getElementById('aiModel');
+                        if (el) el.value = c.model || AI_DEFAULTS.model;
+                        // 同步写回localStorage作fallback
+                        localStorage.setItem(AI_CONFIG_KEY, JSON.stringify({
+                            base_url: c.base_url || AI_DEFAULTS.base_url,
+                            api_key: c.api_key || '',
+                            model: c.model || AI_DEFAULTS.model
+                        }));
+                    }
+                })
+                .catch(function () {});
+        }
+    }
+
+    window.settingsPageSaveAIConfig = function () {
+        var base_url = (document.getElementById('aiBaseUrl').value || '').trim();
+        var api_key = (document.getElementById('aiApiKey').value || '').trim();
+        var model = (document.getElementById('aiModel').value || '').trim();
+
+        if (!base_url) {
+            toast('请填写 API Base URL', 'error');
+            return;
+        }
+        if (!api_key) {
+            toast('请填写 API Key', 'error');
+            return;
+        }
+        if (!model) {
+            toast('请填写模型名称', 'error');
+            return;
+        }
+
+        // 同时写入localStorage作fallback，服务器端也保存（登录模式）
+        localStorage.setItem(AI_CONFIG_KEY, JSON.stringify({ base_url: base_url, api_key: api_key, model: model }));
+        if (isLocalMode) {
+            toast('AI 配置已保存', 'success');
+        } else {
+            fetch('/api/ai/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getAuthToken() },
+                body: JSON.stringify({ base_url: base_url, api_key: api_key, model: model })
+            })
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (data.success) {
+                        toast('AI 配置已保存', 'success');
+                    } else {
+                        toast(data.message || '保存失败', 'error');
+                    }
+                })
+                .catch(function () { toast('网络错误', 'error'); });
+        }
+    };
+
     // ===== 外观 Section =====
     function renderAppearanceSection(container) {
         settings = ui.load();
@@ -324,6 +443,10 @@
                     '<svg class="sp-sidebar-icon" viewBox="0 0 24 24"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 22C6.5 22 2 17.5 2 12S6.5 2 12 2s10 4.5 10 10-4.5 10-10 10z"/></svg>' +
                     '<span>外观</span>' +
                 '</div>' +
+                '<div class="sp-sidebar-item" data-section="ai">' +
+                    '<svg class="sp-sidebar-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>' +
+                    '<span>AI 配置</span>' +
+                '</div>' +
             '</div>' +
             '<div class="sp-content" id="spContent"></div>';
 
@@ -344,6 +467,8 @@
             renderAccountSection(content);
         } else if (currentSection === 'appearance') {
             renderAppearanceSection(content);
+        } else if (currentSection === 'ai') {
+            renderAIConfigSection(content);
         }
     }
 
@@ -370,6 +495,11 @@
                     '<span class="sp-narrow-label">外观</span>' +
                     '<svg class="sp-narrow-chevron" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>' +
                 '</div>' +
+                '<div class="sp-narrow-item" data-section="ai">' +
+                    '<svg class="sp-narrow-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>' +
+                    '<span class="sp-narrow-label">AI 配置</span>' +
+                    '<svg class="sp-narrow-chevron" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>' +
+                '</div>' +
             '</div>';
 
         main.querySelectorAll('.sp-narrow-item').forEach(function (item) {
@@ -386,6 +516,8 @@
             renderAccountSection(document.getElementById('spContent'));
         } else if (currentSection === 'appearance') {
             renderAppearanceSection(document.getElementById('spContent'));
+        } else if (currentSection === 'ai') {
+            renderAIConfigSection(document.getElementById('spContent'));
         }
     }
 
