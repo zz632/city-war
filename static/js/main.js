@@ -379,6 +379,11 @@ function initLobby() {
     socket.on('lobby_update', data => {
         renderLobbyPlayers(data.players || []);
         updateLobbyButtons(data.players || []);
+        // 同步「允许中途加入」开关状态
+        const toggle = document.getElementById('allowJoinToggle');
+        if (toggle && data.allow_join_after_start !== undefined) {
+            toggle.checked = data.allow_join_after_start;
+        }
     });
 
     socket.on('game_started', data => {
@@ -386,6 +391,8 @@ function initLobby() {
     });
 
     socket.on('error_msg', data => toast(data.message, 'error'));
+
+    socket.on('ai_api_error', data => showAiApiError(data));
 
     socket.on('chat_message', data => appendChat(data));
 
@@ -419,6 +426,14 @@ function initLobby() {
         socket.emit('unspectate_join', { room_id: roomId, player_id: myPlayerId });
     });
 
+    // 添加人机按钮
+    const addAiBtn = document.getElementById('addAiBtn');
+    if (addAiBtn) addAiBtn.addEventListener('click', () => {
+        // 登录模式优先后端取配置，但也带上localStorage config作fallback
+        const aiConfig = JSON.parse(localStorage.getItem('citywar_ai_config') || '{}');
+        socket.emit('add_ai_bot', { room_id: roomId, player_id: myPlayerId, config: aiConfig });
+    });
+
     // 聊天
     setupChat();
 
@@ -433,6 +448,11 @@ async function fetchLobbyState(roomId) {
         if (data.success) {
             renderLobbyPlayers(data.room.players || []);
             updateLobbyButtons(data.room.players || []);
+            // 同步初始开关状态
+            const toggle = document.getElementById('allowJoinToggle');
+            if (toggle && data.room.allow_join_after_start !== undefined) {
+                toggle.checked = data.room.allow_join_after_start;
+            }
         }
     } catch (e) {}
 }
@@ -456,6 +476,7 @@ function renderLobbyPlayers(players) {
         const nameTags = [];
         if (p.id === myPlayerId) nameTags.push('<span class="badge badge-blue" style="font-size:10px">我</span>');
         if (p.is_host) nameTags.push('<span class="badge badge-gold" style="font-size:10px">房主</span>');
+        if (p.is_ai) nameTags.push('<span class="badge" style="font-size:10px;background:rgba(139,92,246,0.15);color:#8b5cf6">AI</span>');
 
         let statusBadge = '';
         if (p.is_ready) {
@@ -539,6 +560,26 @@ function updateLobbyButtons(players) {
     if (unspectateBtn) {
         unspectateBtn.style.display = me.is_spectator ? '' : 'none';
     }
+
+    // 添加人机按钮
+    const addAiBtn = document.getElementById('addAiBtn');
+    if (addAiBtn) {
+        const aiCount = arr.filter(p => p.is_ai).length;
+        addAiBtn.style.display = aiCount < 4 ? '' : 'none';
+    }
+
+    // 「允许中途加入」开关：仅房主可见
+    const allowJoinWrap = document.getElementById('allowJoinWrap');
+    const allowJoinToggle = document.getElementById('allowJoinToggle');
+    if (allowJoinWrap) {
+        allowJoinWrap.style.display = me.is_host ? '' : 'none';
+    }
+    if (allowJoinToggle && !allowJoinToggle._bound) {
+        allowJoinToggle._bound = true;
+        allowJoinToggle.addEventListener('change', () => {
+            socket.emit('toggle_allow_join', { room_id: myRoomId, player_id: myPlayerId, allow: allowJoinToggle.checked });
+        });
+    }
 }
 
 // ===== 游戏页 =====
@@ -575,7 +616,16 @@ function initGame() {
 
     socket.on('chat_message', data => appendChat(data));
 
-    socket.on('error_msg', data => toast(data.message, 'error'));
+    socket.on('error_msg', data => {
+        // 连续操作超过5次用普通提示而非错误
+        if (data.message && data.message.includes('连续操作超过5次')) {
+            toast(data.message, 'info');
+        } else {
+            toast(data.message, 'error');
+        }
+    });
+
+    socket.on('ai_api_error', data => showAiApiError(data));
 
     socket.on('back_to_lobby', data => {
         // 游戏结束，所有人回到大厅
@@ -606,11 +656,9 @@ function initGame() {
             const round = parseInt(document.getElementById('statRound')?.textContent || '1');
             const detail = data.action_detail;
             const actionNames = { 'attack': '攻城', 'defend': '守城', 'jungle': '打野', 'duel': '约战', 'repair': '修城', 'alliance': '结盟' };
-            const gestureNames = { 'rock': '石头', 'paper': '布', 'scissors': '剪刀' };
             let text = data.player_name + ' 提交行动 [' + (actionNames[detail.type] || detail.type) + ']';
             if (detail.target_name) text += ' | 目标：' + detail.target_name;
             if (detail.bet) text += ' | 赌注：' + detail.bet + ' 城池';
-            if (detail.gesture) text += ' | 出手：' + (gestureNames[detail.gesture] || detail.gesture);
             _godViewHistory.push({ round: round, type: 'action', text: text });
             if (amSpectator) {
                 renderGodView(window._lastPlayers || []);
@@ -670,6 +718,21 @@ function initGame() {
 
     socket.on('duel_ended', data => onDuelEnded(data));
 
+    socket.on('duel_rejected', data => {
+        // 显示拒绝提示
+        const rejectedMsg = data.player_name + ' 拒绝了约战' + (data.forfeited_cities ? '，贡奉了 ' + data.forfeited_cities + ' 城池' : '');
+        toast(rejectedMsg, 'info');
+        // 隐藏约战面板
+        const dp = document.getElementById('duelPanel');
+        if (dp) dp.style.display = 'none';
+        // 记录到上帝视角
+        const round = parseInt(document.getElementById('statRound')?.textContent || '1');
+        _godViewHistory.push({ round: round, type: 'duel', text: '[约战拒绝] ' + rejectedMsg });
+        // 恢复行动面板
+        const ap = document.getElementById('actionPanel');
+        if (ap) ap.style.display = 'block';
+    });
+
     // 拍卖事件
     socket.on('auction_started', data => showAuctionPanel(data));
 
@@ -707,16 +770,6 @@ function initGame() {
         });
     });
 
-    // 猜拳按钮
-    document.querySelectorAll('.gesture-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const gesture = btn.dataset.gesture;
-            if (selectedAction === 'jungle') {
-                submitAction('jungle', null, gesture);
-            }
-        });
-    });
-
     // 继续行动按钮
     const continueBtn = document.getElementById('continueBtn');
     if (continueBtn) continueBtn.addEventListener('click', () => {
@@ -732,10 +785,6 @@ function initGame() {
 function selectAction(action) {
     selectedAction = action;
     actionSubmitted = false;
-
-    // 隐藏猜拳区域
-    const ga = document.getElementById('gestureArea');
-    if (ga) ga.style.display = 'none';
 
     // 隐藏提示
     const hint = document.getElementById('actionHint');
@@ -755,8 +804,7 @@ function selectAction(action) {
         showHint('请点击一名玩家发起约战');
         enableTargetSelection(action);
     } else if (action === 'jungle') {
-        if (ga) ga.style.display = 'block';
-        showHint('选择你的手势');
+        submitAction('jungle');
     } else if (action === 'defend') {
         submitAction('defend');
     } else if (action === 'repair') {
@@ -903,7 +951,7 @@ function submitDuelFromInput() {
         return;
     }
     if (!duelTargetId) return;
-    submitAction('duel', duelTargetId, null, bet);
+    submitAction('duel', duelTargetId, bet);
     duelTargetId = null;
 }
 
@@ -915,10 +963,9 @@ function showHint(text) {
     }
 }
 
-function submitAction(action, targetId, gesture, bet) {
+function submitAction(action, targetId, bet) {
     const data = { room_id: myRoomId, player_id: myPlayerId, action_type: action };
     if (targetId) data.target_id = targetId;
-    if (gesture) data.gesture = gesture;
     if (bet) data.bet = bet;
 
     socket.emit('submit_action', data);
@@ -942,10 +989,6 @@ function onActionAccepted(action) {
     };
     showHint('已选择：' + (actionNames[action] || action) + '（可点击其他操作更改）');
 
-    // 隐藏猜拳区域
-    const ga = document.getElementById('gestureArea');
-    if (ga) ga.style.display = 'none';
-
     // 重置玩家卡片点击
     document.querySelectorAll('.p-card').forEach(c => {
         c.classList.remove('selected');
@@ -967,6 +1010,24 @@ function renderGameState(data) {
 
     if (roundEl) roundEl.textContent = currentRound;
     if (phaseEl) phaseEl.textContent = _phaseLabel(data.phase);
+
+    // 计算并显示倍率
+    const multBox = document.getElementById('statMultBox');
+    const multEl = document.getElementById('statMult');
+    if (multBox && multEl) {
+        if (currentRound >= 24) {
+            multEl.textContent = '×8';
+            multBox.style.display = '';
+        } else if (currentRound >= 16) {
+            multEl.textContent = '×4';
+            multBox.style.display = '';
+        } else if (currentRound >= 8) {
+            multEl.textContent = '×2';
+            multBox.style.display = '';
+        } else {
+            multBox.style.display = 'none';
+        }
+    }
 
     // 判断自己是否是观战者
     let myData = null;
@@ -994,8 +1055,9 @@ function renderGameState(data) {
         const div = document.createElement('div');
         div.className = 'p-card' + (p.id === myPlayerId ? ' self' : '') + (!p.is_alive ? ' dead' : '');
         div.dataset.pid = p.id;
+        const aiBadge = p.is_ai ? ' <span class="badge" style="font-size:10px;background:rgba(139,92,246,0.15);color:#8b5cf6">AI</span>' : '';
         div.innerHTML = `
-            <div class="p-card-name">${esc(p.name)} ${p.id === myPlayerId ? '<span class="badge badge-blue">我</span>' : ''}</div>
+            <div class="p-card-name">${esc(p.name)} ${p.id === myPlayerId ? '<span class="badge badge-blue">我</span>' : ''}${aiBadge}</div>
             <div class="p-card-cities">${p.cities}<small>城</small></div>
         `;
         grid.appendChild(div);
@@ -1023,7 +1085,7 @@ function renderGameState(data) {
 
     // 后期操作
     const lateActions = document.getElementById('lateActions');
-    if (lateActions) lateActions.style.display = (data.round >= 6) ? 'block' : 'none';
+    if (lateActions) lateActions.style.display = (data.round >= 3) ? 'block' : 'none';
 
     // 更新结盟/解盟按钮
     updateAllianceButton(myData, arr);
@@ -1174,7 +1236,6 @@ function renderGodView(players) {
     panel.style.display = 'block';
     const round = parseInt(document.getElementById('statRound')?.textContent || '1');
     const actionNames = { 'attack': '攻城', 'defend': '守城', 'jungle': '打野', 'duel': '约战', 'repair': '修城', 'alliance': '结盟', 'dissolve_alliance': '解盟' };
-    const gestureNames = { 'rock': '石头', 'paper': '布', 'scissors': '剪刀' };
     const typeIcons = {
         'action': '&#9654;', 'system': '&#9881;', 'city': '&#9650;',
         'event': '&#9888;', 'duel': '&#9876;', 'duel_system': '&#9733;',
@@ -1226,7 +1287,6 @@ function renderGodView(players) {
                 if (t) actionStr += ' → ' + t.name;
             }
             if (p.action.bet) actionStr += '（' + p.action.bet + '城）';
-            if (p.action.gesture) actionStr += '（' + (gestureNames[p.action.gesture] || p.action.gesture) + '）';
         }
         const allyName = p.alliance_with ? (players.find(ap => ap.id === p.alliance_with)?.name || '?') : '';
         overviewHtml += `<div class="god-player-row">
@@ -1378,8 +1438,6 @@ function showActionPanel() {
     window._duelInitiator = null;
     window._duelTarget = null;
     document.querySelectorAll('.act-btn[data-action]').forEach(b => b.classList.remove('active'));
-    const ga = document.getElementById('gestureArea');
-    if (ga) ga.style.display = 'none';
     const hint = document.getElementById('actionHint');
     if (hint) hint.style.display = 'none';
     document.querySelectorAll('.p-card').forEach(c => {
@@ -1414,7 +1472,6 @@ function showMeetingPanel(data) {
             const actions = data.actions || {};
             const arr = Array.isArray(players) ? players : Object.values(players);
             const actionLabels = { 'attack': '攻城', 'defend': '守城', 'jungle': '打野', 'duel': '约战', 'repair': '修城', 'alliance': '结盟', 'dissolve_alliance': '解盟' };
-            const gestureLabels = { 'rock': '石头', 'paper': '布', 'scissors': '剪刀' };
 
             arr.forEach(p => {
                 const change = cityChanges[p.id] || 0;
@@ -1431,7 +1488,7 @@ function showMeetingPanel(data) {
                 let actionStr = '';
                 if (act) {
                     if (act.type === 'jungle') {
-                        actionStr = '<span style="color:var(--gold);font-size:12px">打野 ' + (gestureLabels[act.gesture] || '?') + ' vs ' + (gestureLabels[act.system_gesture] || '?') + ' → ' + (act.result === 'win' ? '成功' : '失败') + '</span>';
+                        actionStr = '<span style="color:var(--gold);font-size:12px">打野 → ' + (act.result === 'win' ? '成功' : '失败') + '</span>';
                     } else if (act.type === 'attack') {
                         const target = arr.find(ap2 => ap2.id === act.target);
                         actionStr = '<span style="color:var(--red);font-size:12px">攻城→' + (target ? esc(target.name) : '?') + '</span>';
@@ -1529,8 +1586,9 @@ function renderRoundResult(data) {
                     }
                 }
 
+                const aiBadge = p.is_ai ? ' <span class="badge" style="font-size:10px;background:rgba(139,92,246,0.15);color:#8b5cf6">AI</span>' : '';
                 div.innerHTML = `
-                    <div class="p-card-name">${esc(p.name)} ${p.id === myPlayerId ? '<span class="badge badge-blue">我</span>' : ''}</div>
+                    <div class="p-card-name">${esc(p.name)} ${p.id === myPlayerId ? '<span class="badge badge-blue">我</span>' : ''}${aiBadge}</div>
                     <div class="p-card-cities">${p.cities}<small>城</small></div>
                     ${godViewHtml}
                 `;
@@ -1592,14 +1650,13 @@ function renderRoundResult(data) {
     });
     // 回合行动细节记入历史（系统随机数等）
     const actions = data.actions || {};
-    const gestureNames = { 'rock': '石头', 'paper': '布', 'scissors': '剪刀' };
     Object.keys(actions).forEach(pid => {
         const a = actions[pid];
         const p = allPlayers.find(ap => ap.id === pid);
         if (!p) return;
         let text = '';
         if (a.type === 'jungle') {
-            text = p.name + ' [打野] 出手：' + (gestureNames[a.gesture] || a.gesture || '?') + ' | 系统：' + (gestureNames[a.system_gesture] || a.system_gesture || '?') + ' | 结果：' + (a.result === 'win' ? '成功（获得技能卡）' : '失败（+' + (data.round >= 6 ? 20 : 10) + '城池）');
+            text = p.name + ' [打野] 结果：' + (a.result === 'skill_card' ? '获得技能卡' : '获得' + (a.gain || 10) + '城池');
         } else if (a.type === 'attack') {
             const target = allPlayers.find(ap => ap.id === a.target);
             text = p.name + ' [攻城] 目标：' + (target ? target.name : '?') + ' | 伤害：' + (a.damage || 0) + ' | 城池转移：' + (a.damage || 0) + '城';
@@ -1654,7 +1711,6 @@ function renderRoundResult(data) {
         const chatActions = data.actions || {};
         const chatPlayers = Array.isArray(data.players) ? data.players : Object.values(data.players || {});
         const chatActionLabels = { 'attack': '攻城', 'defend': '守城', 'jungle': '打野', 'duel': '约战', 'repair': '修城', 'alliance': '结盟', 'dissolve_alliance': '解盟' };
-        const chatGestureLabels = { 'rock': '石头', 'paper': '布', 'scissors': '剪刀' };
         const actionLines = [];
         Object.keys(chatActions).forEach(pid => {
             const a = chatActions[pid];
@@ -1671,7 +1727,7 @@ function renderRoundResult(data) {
                 const t = chatPlayers.find(ap2 => ap2.id === a.partner);
                 if (t) line += ' + ' + esc(t.name);
             } else if (a.type === 'jungle') {
-                line += ' ' + (chatGestureLabels[a.gesture] || '?') + ' vs ' + (chatGestureLabels[a.system_gesture] || '?') + ' → ' + (a.result === 'win' ? '成功' : '失败');
+                line += ' → ' + (a.result === 'win' ? '成功' : '失败');
             }
             actionLines.push(line);
         });
@@ -1846,6 +1902,9 @@ function showDuelPanel(data) {
     // 非参与者始终显示等待，参与者根据回合显示
     if (!isParticipant) {
         showDuelWait();
+    } else if (myPlayerId === data.target) {
+        // 被约战方：显示拒绝按钮和等待信息
+        showDuelTargetWait(data);
     } else {
         updateDuelTurn(data.current_turn);
     }
@@ -1901,6 +1960,30 @@ function showDuelWait() {
     if (turnInfo) turnInfo.innerHTML = '';
     if (buttons) buttons.style.display = 'none';
     if (waitInfo) waitInfo.style.display = 'block';
+}
+
+// 被约战方显示拒绝按钮
+function showDuelTargetWait(data) {
+    const turnInfo = document.getElementById('duelTurnInfo');
+    const buttons = document.getElementById('duelButtons');
+    const waitInfo = document.getElementById('duelWaitInfo');
+    if (turnInfo) turnInfo.innerHTML = '';
+    if (buttons) buttons.style.display = 'none';
+    // 显示拒绝按钮
+    if (waitInfo) {
+        waitInfo.style.display = 'block';
+        waitInfo.innerHTML = '<div style="margin-bottom:10px">约战进行中，请等待...</div>' +
+            '<button class="btn btn-outline" style="padding:6px 16px;font-size:13px;color:var(--red);border-color:var(--red)" onclick="rejectDuel()">拒绝约战</button>';
+    }
+}
+
+function rejectDuel() {
+    if (!socket) return;
+    socket.emit('duel_reject', { room_id: myRoomId, player_id: myPlayerId });
+    toast('已拒绝约战', 'info');
+    // 隐藏约战面板
+    const dp = document.getElementById('duelPanel');
+    if (dp) dp.style.display = 'none';
 }
 
 function shootDuelFromInput() {
@@ -2023,8 +2106,9 @@ function onDuelEnded(data) {
                 const div = document.createElement('div');
                 div.className = 'p-card' + (p.id === myPlayerId ? ' self' : '') + (!p.is_alive ? ' dead' : '');
                 div.dataset.pid = p.id;
+                const aiBadge = p.is_ai ? ' <span class="badge" style="font-size:10px;background:rgba(139,92,246,0.15);color:#8b5cf6">AI</span>' : '';
                 div.innerHTML = `
-                    <div class="p-card-name">${esc(p.name)} ${p.id === myPlayerId ? '<span class="badge badge-blue">我</span>' : ''}</div>
+                    <div class="p-card-name">${esc(p.name)} ${p.id === myPlayerId ? '<span class="badge badge-blue">我</span>' : ''}${aiBadge}</div>
                     <div class="p-card-cities">${p.cities}<small>城</small></div>
                 `;
                 grid.appendChild(div);
@@ -2078,4 +2162,26 @@ function esc(s) {
     const d = document.createElement('div');
     d.textContent = s || '';
     return d.innerHTML;
+}
+
+// ===== AI API 错误弹窗 =====
+function showAiApiError(data) {
+    // 防止频繁弹窗，3秒内只弹一次
+    if (showAiApiError._last && Date.now() - showAiApiError._last < 3000) return;
+    showAiApiError._last = Date.now();
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(1,0,0,0.5);z-index:10000;display:flex;align-items:center;justify-content:center';
+    const box = document.createElement('div');
+    box.style.cssText = 'background:var(--card-bg,#fff);color:var(--text,#222);border-radius:12px;padding:20px;max-width:480px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.3)';
+    box.innerHTML =
+        '<div style="font-weight:600;font-size:15px;margin-bottom:8px;color:#e74c3c">AI API 错误</div>' +
+        '<div style="font-size:13px;margin-bottom:6px;opacity:0.7">' + esc(data.ai_name || '') + '</div>' +
+        '<div style="font-size:13px;margin-bottom:12px;padding:8px;background:rgba(231,76,60,0.1);border-radius:6px;word-break:break-all">' + esc(data.error || '未知错误') + '</div>' +
+        (data.raw_content ? '<div style="font-size:12px;margin-bottom:10px"><div style="opacity:0.6;margin-bottom:4px">LLM返回内容：</div><pre style="white-space:pre-wrap;word-break:break-all;padding:8px;background:rgba(0,0,0,0.06);border-radius:6px;margin:0;font-size:11px">' + esc(data.raw_content) + '</pre></div>' : '') +
+        (data.raw_response ? '<div style="font-size:12px;margin-bottom:12px"><div style="opacity:0.6;margin-bottom:4px">API完整响应：</div><pre style="white-space:pre-wrap;word-break:break-all;padding:8px;background:rgba(0,0,0,0.06);border-radius:6px;margin:0;font-size:11px">' + esc(data.raw_response) + '</pre></div>' : '') +
+        '<button style="width:100%;padding:8px;border:none;border-radius:8px;background:var(--accent,#007AFF);color:#fff;font-size:14px;cursor:pointer" onclick="this.closest(\'div[style*=fixed]\').remove()">知道了</button>';
+    overlay.appendChild(box);
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
 }

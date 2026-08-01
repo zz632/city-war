@@ -27,7 +27,7 @@ class GameLogic:
         
         # 初始化玩家状态
         for player in self.room.players.values():
-            player.cities = 100
+            player.cities = 250
             player.is_alive = True
             player.skills = []
             player.action = None
@@ -56,7 +56,7 @@ class GameLogic:
         
         # 验证行动类型
         valid_actions = ['attack', 'defend', 'hunt', 'duel']
-        if self.room.game_state.current_round >= 6:
+        if self.room.game_state.current_round >= 3:
             valid_actions.extend(['repair', 'alliance'])
         
         if action_type not in valid_actions:

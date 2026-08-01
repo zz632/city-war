@@ -9,13 +9,24 @@ from .models import Room, Player, GameState, GamePhase, ActionType
 from .skills import get_random_skill
 
 
+def get_multiplier(round_num):
+    """获取回合倍率"""
+    if round_num >= 24:
+        return 8
+    elif round_num >= 16:
+        return 4
+    elif round_num >= 8:
+        return 2
+    else:
+        return 1
+
+
 class RoomManager:
     """房间管理器"""
     
     def __init__(self):
         self.rooms: Dict[str, Room] = {}
         self.players: Dict[str, Player] = {}
-        self.ip_player_map: Dict[str, str] = {}  # "client_ip:room_id" -> player_sid
     
     def create_room(self, player_name: str, player_sid: str, client_ip: str = '') -> tuple:
         """创建新房间"""
@@ -23,10 +34,6 @@ class RoomManager:
         room_id = str(random.randint(1000, 9999))
         while room_id in self.rooms:
             room_id = str(random.randint(1000, 9999))
-
-        # 检查 IP 是否已在该房间中
-        if client_ip and f'{client_ip}:{room_id}' in self.ip_player_map:
-            return None, '该设备已在此房间中，不可重复加入'
         
         player = Player(
             id=player_sid,
@@ -44,8 +51,6 @@ class RoomManager:
         
         self.rooms[room_id] = room
         self.players[player_sid] = player
-        if client_ip:
-            self.ip_player_map[f'{client_ip}:{room_id}'] = player_sid
         
         return room_id, player
     
@@ -53,10 +58,6 @@ class RoomManager:
         """加入房间"""
         room_id = str(room_id).strip()
         if room_id not in self.rooms:
-            return None
-
-        # 检查 IP 是否已在该房间中
-        if client_ip and f'{client_ip}:{room_id}' in self.ip_player_map:
             return None
 
         room = self.rooms[room_id]
@@ -67,7 +68,10 @@ class RoomManager:
         # 判断是否需要成为观战者
         is_spectator = False
         if room.game_state and room.game_state.phase != GamePhase.WAITING:
-            is_spectator = True
+            if not room.allow_join_after_start:
+                # 游戏已开始且不允许中途加入，成为观战者
+                is_spectator = True
+            # 允许中途加入时，以正常玩家身份加入
 
         player = Player(
             id=player_sid,
@@ -75,13 +79,11 @@ class RoomManager:
             room_id=room_id,
             is_spectator=is_spectator,
             is_alive=not is_spectator,
-            cities=0 if is_spectator else 100
+            cities=0 if is_spectator else 250
         )
 
         room.players[player_sid] = player
         self.players[player_sid] = player
-        if client_ip:
-            self.ip_player_map[f'{client_ip}:{room_id}'] = player_sid
 
         return player
     
@@ -104,11 +106,6 @@ class RoomManager:
         
         if player_sid in self.players:
             del self.players[player_sid]
-        
-        # 清理 IP 映射
-        ips_to_remove = [ip for ip, sid in self.ip_player_map.items() if sid == player_sid]
-        for ip in ips_to_remove:
-            del self.ip_player_map[ip]
         
         # 如果房间空了，删除房间
         if not room.players:
@@ -147,19 +144,24 @@ class RoomManager:
         
         # 初始化玩家城池数
         for player in room.players.values():
-            player.cities = 100
+            player.cities = 250
             player.is_alive = True
             player.skills = []
             player.alliance_with = None
             player.alliance_benefits = 0
             player.alliance_damages = 0
             player.repair_active = False
+            player.action_history = []
+            # 保留AI配置，只清除游戏状态效果
+            ai_cfg = player.status_effects.get('ai_config')
             player.status_effects = {}
+            if ai_cfg:
+                player.status_effects['ai_config'] = ai_cfg
         
         return True
     
     def submit_action(self, room_id: str, player_sid: str, action_type: str,
-                     target_id: str = None, bet: int = 0, gesture: str = None) -> bool:
+                     target_id: str = None, bet: int = 0) -> bool:
         """提交行动"""
         if room_id not in self.rooms:
             return False
@@ -183,12 +185,14 @@ class RoomManager:
         if player.status_effects.get('force_attack') and action_type not in ('attack', 'skip'):
             return False
         
-        # 检查是否是后期阶段
-        is_late_game = game_state.round >= 6
-        
+        # 检查同种操作连续不超过5次
+        if action_type != 'skip':
+            if len(player.action_history) >= 5 and all(a == action_type for a in player.action_history[-5:]):
+                return False
+
         # 验证行动类型
         valid_actions = ['skip', 'attack', 'defend', 'jungle', 'duel']
-        if is_late_game:
+        if game_state.round >= 3:
             valid_actions.extend(['repair', 'alliance', 'dissolve_alliance'])
 
         if action_type not in valid_actions:
@@ -206,16 +210,31 @@ class RoomManager:
                 return False
             if action_type == 'alliance' and target_id == player_sid:
                 return False
-            # 离间效果：不允许互相攻击
+            # 逆转卡效果：交换后N轮内不能攻击对方
             if action_type in ['attack', 'duel']:
-                blocked = player.status_effects.get('blocked_attack')
-                if blocked and blocked.get('target') == target_id:
+                reverse_no = player.status_effects.get('reverse_no_attack')
+                if reverse_no and reverse_no.get('target') == target_id:
                     return False
+            # 联盟内成员间攻击无效
+            if action_type == 'attack' and player.alliance_with == target_id:
+                return False
 
-        # 结盟校验：存活玩家≤2不能结盟、已结盟不能再结盟、目标已结盟也不能发起
+        # 结盟校验：联盟人数≤总存活人数1/2
         if action_type == 'alliance':
+            # 离间卡效果：不能联盟
+            if player.status_effects.get('no_alliance'):
+                return False
             alive_count = sum(1 for p in room.players.values() if p.is_alive and not p.is_spectator)
-            if alive_count <= 2:
+            # 计算已有联盟人数（包括当前发起者和目标）
+            alliance_count = 0
+            if player.alliance_with:
+                alliance_count += 2
+            if target_id and room.players.get(target_id) and room.players[target_id].alliance_with:
+                alliance_count += 2
+            # 如果双方都没有联盟，新联盟将有2人
+            if not player.alliance_with and not (target_id and room.players.get(target_id) and room.players[target_id].alliance_with):
+                alliance_count = 2
+            if alliance_count > int(alive_count / 2):
                 return False
             if player.alliance_with:
                 return False
@@ -228,20 +247,26 @@ class RoomManager:
                 return False
         
         # 验证赌注
+        multiplier = get_multiplier(game_state.round)
         if action_type == 'duel' and bet > 0:
             target = room.players.get(target_id)
             if target:
                 max_bet = int(min(player.cities, target.cities) * 0.6)
                 if bet > max_bet:
                     return False
+                if bet < 15 * multiplier:
+                    return False
         
+        # 记录行动历史
+        if action_type != 'skip':
+            player.action_history.append(action_type)
+
         # 创建行动
         action = {
             'player_id': player_sid,
             'action_type': action_type,
             'target_id': target_id,
             'bet': bet,
-            'gesture': gesture,
             'timestamp': time.time()
         }
         
@@ -259,6 +284,8 @@ class RoomManager:
         if not game_state:
             return {}
         
+        multiplier = get_multiplier(game_state.round)
+        
         results = {
             'round': game_state.round,
             'actions': {},
@@ -273,8 +300,10 @@ class RoomManager:
         for pid in room.players:
             results['city_changes'][pid] = 0
 
-        # 处理持续效果（屯田卡等）
+        # 处理持续效果（屯田卡等）—— 先死技能卡不生效
         for pid, player in room.players.items():
+            if not player.is_alive:
+                continue
             recurring = player.status_effects.get('recurring')
             if recurring and recurring.get('rounds', 0) > 0:
                 amount = recurring['amount']
@@ -284,46 +313,27 @@ class RoomManager:
                 if recurring['rounds'] <= 0:
                     del player.status_effects['recurring']
         
-        is_late_game = game_state.round >= 6
-        
-        # 处理打野（猜拳）- 50%胜率
+        # 处理打野——50%概率获10*multiplier城池，50%获技能卡
         for pid, action in game_state.actions.items():
             if action['action_type'] == 'jungle':
                 player = room.players[pid]
-                gestures = ['rock', 'paper', 'scissors']
-                player_gesture = action.get('gesture') if action.get('gesture') in gestures else random.choice(gestures)
-                system_gesture = random.choice(gestures)
-
-                win_conditions = {
-                    'rock': 'scissors',
-                    'paper': 'rock',
-                    'scissors': 'paper'
-                }
-
-                is_win = win_conditions.get(player_gesture) == system_gesture
-                if player_gesture == system_gesture:
-                    is_win = True
-
-                if is_win:
+                if not player.is_alive:
+                    continue
+                if random.random() < 0.5:
+                    # 50%获得城池
+                    gain = 10 * multiplier
+                    player.change_cities(gain)
+                    results['city_changes'][pid] = results['city_changes'].get(pid, 0) + gain
+                    results['actions'][pid] = {'type': 'jungle', 'result': 'cities', 'gain': gain}
+                    results['messages'].append(player.name + f' 打野获得{gain}城池')
+                else:
+                    # 50%获得技能卡
                     skill = get_random_skill()
                     player.add_skill(skill)
                     game_state.skill_cards_drawn += 1
-                    results['skill_cards'].append({
-                        'player_id': pid,
-                        'card': skill,
-                        'result': 'win'
-                    })
-                else:
-                    gain = 20 if is_late_game else 10
-                    player.change_cities(gain)
-                    results['city_changes'][pid] += gain
-
-                results['actions'][pid] = {
-                    'type': 'jungle',
-                    'gesture': player_gesture,
-                    'system_gesture': system_gesture,
-                    'result': 'win' if is_win else 'lose'
-                }
+                    results['skill_cards'].append({'player_id': pid, 'card': skill, 'result': 'skill_card'})
+                    results['actions'][pid] = {'type': 'jungle', 'result': 'skill_card'}
+                    results['messages'].append(player.name + ' 打野获得技能卡：' + skill.get('name', ''))
         
         # 处理攻城
         attack_pairs = []
@@ -332,6 +342,9 @@ class RoomManager:
                 attacker = room.players[pid]
                 target = room.players.get(action.get('target_id'))
                 if target and target.is_alive:
+                    # 联盟内成员间攻击无效
+                    if attacker.alliance_with and attacker.alliance_with == action.get('target_id'):
+                        continue
                     # 检查是否互相攻城
                     target_action = game_state.actions.get(action.get('target_id'))
                     if target_action and target_action['action_type'] == 'attack' and target_action.get('target_id') == pid:
@@ -343,6 +356,10 @@ class RoomManager:
             if action['action_type'] == 'attack':
                 target_id = action.get('target_id')
                 if target_id:
+                    # 联盟内成员间攻击无效
+                    attacker = room.players[pid]
+                    if attacker.alliance_with and attacker.alliance_with == target_id:
+                        continue
                     attacked_players.add(target_id)
 
         # 处理攻城伤害
@@ -350,79 +367,84 @@ class RoomManager:
             if action['action_type'] == 'attack':
                 attacker = room.players[pid]
                 target = room.players.get(action.get('target_id'))
-                if target and target.is_alive:
-                    # 检查是否互相攻城
-                    is_mutual = any(
-                        (pid == p1 and action.get('target_id') == p2) or
-                        (pid == p2 and action.get('target_id') == p1)
-                        for p1, p2 in attack_pairs
-                    )
+                if not target or not target.is_alive:
+                    continue
+                # 联盟内成员间攻击无效
+                if attacker.alliance_with and attacker.alliance_with == action.get('target_id'):
+                    results['actions'][pid] = {'type': 'attack', 'target': action.get('target_id'), 'damage': 0, 'alliance_blocked': True}
+                    results['messages'].append(attacker.name + ' 与 ' + target.name + ' 是联盟，无法攻击')
+                    continue
 
-                    # 计算伤害
-                    base_damage = 40 if is_late_game else 20
-                    if is_mutual:
-                        damage = max(0, base_damage - 100)
+                # 检查是否互相攻城
+                is_mutual = any(
+                    (pid == p1 and action.get('target_id') == p2) or
+                    (pid == p2 and action.get('target_id') == p1)
+                    for p1, p2 in attack_pairs
+                )
+
+                # 计算伤害：固定25 * multiplier
+                damage = 25 * multiplier
+                if is_mutual:
+                    damage = max(0, damage - 100)
+
+                # 修城方受到的伤害翻倍
+                if target.repair_active:
+                    damage = damage * 2
+
+                # 目标伤害减免
+                if target.status_effects.get('damage_reduction'):
+                    damage = int(damage * (1 - target.status_effects['damage_reduction']))
+
+                # 目标免疫
+                if target.status_effects.get('immune'):
+                    damage = 0
+
+                # 检查目标是否守城
+                target_action = game_state.actions.get(action.get('target_id'))
+                if target_action and target_action['action_type'] == 'defend':
+                    # 奇袭卡无视守城
+                    if attacker.status_effects.get('ignore_defend'):
+                        target.change_cities(-damage)
+                        attacker.change_cities(damage)
+                        results['city_changes'][action.get('target_id')] -= damage
+                        results['city_changes'][pid] += damage
+                        results['actions'][pid] = {
+                            'type': 'attack',
+                            'target': action.get('target_id'),
+                            'damage': damage,
+                            'ignore_defend': True
+                        }
                     else:
-                        damage = base_damage
+                        # 守城反弹：攻击方 -20*multiplier，守城方 +20*multiplier
+                        counter_damage = 20 * multiplier
+                        attacker.change_cities(-counter_damage)
+                        target.change_cities(counter_damage)
+                        results['city_changes'][pid] -= counter_damage
+                        results['city_changes'][action.get('target_id')] += counter_damage
+                else:
+                    # 攻城成功，对方损失的城池转移到攻击方
+                    actual_damage = damage
+                    # 空城卡/诈降卡反弹
+                    if target.status_effects.get('reflect'):
+                        reflect_dmg = target.status_effects['reflect']
+                        attacker.change_cities(-reflect_dmg)
+                        target.change_cities(reflect_dmg)
+                        results['city_changes'][pid] -= reflect_dmg
+                        results['city_changes'][action.get('target_id')] += reflect_dmg
+                        # 免疫则不受伤
+                        if target.status_effects.get('immune'):
+                            actual_damage = 0
 
-                    # 修城方受到的伤害翻倍
-                    if target.repair_active:
-                        damage = damage * 2
-
-                    # 目标伤害减免
-                    if target.status_effects.get('damage_reduction'):
-                        damage = int(damage * (1 - target.status_effects['damage_reduction']))
-
-                    # 目标免疫
-                    if target.status_effects.get('immune'):
-                        damage = 0
-
-                    # 检查目标是否守城
-                    target_action = game_state.actions.get(action.get('target_id'))
-                    if target_action and target_action['action_type'] == 'defend':
-                        # 奇袭卡无视守城
-                        if attacker.status_effects.get('ignore_defend'):
-                            target.change_cities(-damage)
-                            attacker.change_cities(damage)
-                            results['city_changes'][action.get('target_id')] -= damage
-                            results['city_changes'][pid] += damage
-                            results['actions'][pid] = {
-                                'type': 'attack',
-                                'target': action.get('target_id'),
-                                'damage': damage,
-                                'ignore_defend': True
-                            }
-                        else:
-                            # 守城成功，攻击方受反伤，反伤城池转移给守城方
-                            counter_damage = 20 if is_late_game else 10
-                            attacker.change_cities(-counter_damage)
-                            target.change_cities(counter_damage)
-                            results['city_changes'][pid] -= counter_damage
-                            results['city_changes'][action.get('target_id')] += counter_damage
-                    else:
-                        # 攻城成功，对方损失的城池转移到攻击方
-                        actual_damage = damage
-                        # 空城卡/诈降卡反弹
-                        if target.status_effects.get('reflect'):
-                            reflect_dmg = target.status_effects['reflect']
-                            attacker.change_cities(-reflect_dmg)
-                            target.change_cities(reflect_dmg)
-                            results['city_changes'][pid] -= reflect_dmg
-                            results['city_changes'][action.get('target_id')] += reflect_dmg
-                            # 免疫则不受伤
-                            if target.status_effects.get('immune'):
-                                actual_damage = 0
-
-                        target.change_cities(-actual_damage)
-                        attacker.change_cities(actual_damage)
-                        results['city_changes'][action.get('target_id')] -= actual_damage
-                        results['city_changes'][pid] += actual_damage
-                    
-                    results['actions'][pid] = {
-                        'type': 'attack',
-                        'target': action.get('target_id'),
-                        'damage': damage if not (target_action and target_action['action_type'] == 'defend') else 0
-                    }
+                    target.change_cities(-actual_damage)
+                    attacker.change_cities(actual_damage)
+                    results['city_changes'][action.get('target_id')] -= actual_damage
+                    results['city_changes'][pid] += actual_damage
+                
+                results['actions'][pid] = {
+                    'type': 'attack',
+                    'target': action.get('target_id'),
+                    'damage': damage if not (target_action and target_action['action_type'] == 'defend') else 0
+                }
         
         # 处理守城——无被动加成，仅在被攻击时反弹
         for pid, action in game_state.actions.items():
@@ -437,21 +459,24 @@ class RoomManager:
                 results['actions'][pid] = {'type': 'skip', 'reason': reason}
                 results['messages'].append(player.name + ' ' + reason + '，无法行动')
 
-        # 处理修城——增加40城池，本轮受伤翻倍；但被攻击时修城不生效
+        # 处理修城——增加30*multiplier城池，本轮受伤翻倍；但被攻击时修城不生效
         for pid, action in game_state.actions.items():
             if action['action_type'] == 'repair':
                 player = room.players[pid]
+                if not player.is_alive:
+                    continue
+                repair_gain = 30 * multiplier
                 if pid in attacked_players:
                     player.repair_active = True
                     results['actions'][pid] = {'type': 'repair_failed'}
                     results['messages'].append(player.name + ' 修城失败（被攻击），本轮受到的伤害翻倍')
                 else:
-                    player.change_cities(40)
+                    player.change_cities(repair_gain)
                     player.repair_active = True
                     results['actions'][pid] = {'type': 'repair'}
                     results.setdefault('city_changes', {})
-                    results['city_changes'][pid] = results['city_changes'].get(pid, 0) + 40
-                    results['messages'].append(player.name + ' 修城，获得40城池，本轮受到的伤害翻倍')
+                    results['city_changes'][pid] = results['city_changes'].get(pid, 0) + repair_gain
+                    results['messages'].append(player.name + f' 修城，获得{repair_gain}城池，本轮受到的伤害翻倍')
 
         # 处理约战
         for pid, action in game_state.actions.items():
@@ -460,9 +485,12 @@ class RoomManager:
                 target = room.players.get(action.get('target_id'))
                 if target and target.is_alive:
                     bet = action.get('bet', 0)
+                    min_bet = 15 * multiplier
                     if bet <= 0:
-                        bet = min(20, min(initiator.cities, target.cities))
+                        bet = max(min_bet, min(initiator.cities, target.cities))
                     bet = min(bet, min(initiator.cities, target.cities))
+                    if bet < min_bet:
+                        bet = min_bet
                     results['duels'].append({
                         'initiator': pid,
                         'initiator_name': initiator.name,
@@ -501,6 +529,30 @@ class RoomManager:
                     })
                     results['actions'][pair[0]] = {'type': 'alliance', 'partner': pair[1]}
                     results['actions'][pair[1]] = {'type': 'alliance', 'partner': pair[0]}
+
+        # 联盟期间奖励/伤害共享均分
+        # 收集所有联盟对
+        alliance_pairs_processed = set()
+        for pid, player in room.players.items():
+            if player.alliance_with and player.is_alive:
+                pair = tuple(sorted([pid, player.alliance_with]))
+                if pair not in alliance_pairs_processed:
+                    alliance_pairs_processed.add(pair)
+                    p1 = room.players.get(pair[0])
+                    p2 = room.players.get(pair[1])
+                    if p1 and p2 and p1.is_alive and p2.is_alive:
+                        change1 = results['city_changes'].get(pair[0], 0)
+                        change2 = results['city_changes'].get(pair[1], 0)
+                        total_change = change1 + change2
+                        # 均分（去尾法）
+                        share = int(total_change / 2)
+                        # 调整：让两人都变为share
+                        diff1 = share - change1
+                        diff2 = share - change2
+                        p1.change_cities(diff1)
+                        p2.change_cities(diff2)
+                        results['city_changes'][pair[0]] = share
+                        results['city_changes'][pair[1]] = share
 
         # 处理解盟
         for pid, action in game_state.actions.items():

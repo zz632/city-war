@@ -23,6 +23,10 @@
                     <span style="color:var(--text-dim)">等待玩家加入...</span>
                 </li>
             </ul>
+            <button id="addAiBtn" class="btn btn-secondary" style="width:100%;margin-top:8px;display:none">
+                <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;vertical-align:-3px"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+                <span>添加人机</span>
+            </button>
         </div>
 
         <!-- 观战席 -->
@@ -36,6 +40,13 @@
                     <span style="color:var(--text-dim)">暂无观战者</span>
                 </li>
             </ul>
+            <button id="spectateBtn" class="btn btn-secondary" style="width:100%;margin-top:8px;display:none">
+                <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;vertical-align:-3px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                <span>加入观战</span>
+            </button>
+            <button id="unspectateBtn" class="btn btn-secondary" style="width:100%;margin-top:8px;display:none">
+                <span>退出观战</span>
+            </button>
         </div>
 
         <!-- 聊天 -->
@@ -50,6 +61,12 @@
 
         <!-- 操作按钮 -->
         <div class="lobby-footer">
+            <div id="allowJoinWrap" style="display:none;width:100%;margin-bottom:8px">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--text-dim)">
+                    <input type="checkbox" id="allowJoinToggle" style="width:16px;height:16px;accent-color:var(--gold)">
+                    允许中途加入（游戏开始后新玩家以正常身份加入）
+                </label>
+            </div>
             <button id="startBtn" class="btn btn-green btn-lg" style="flex:1;display:none">
                 <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                 <span>开始游戏</span>
@@ -57,13 +74,6 @@
             <button id="urgeBtn" class="btn btn-secondary btn-lg" style="flex:1;display:none">
                 <svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>
                 <span>催促房主开始</span>
-            </button>
-            <button id="spectateBtn" class="btn btn-secondary btn-lg" style="flex:1;display:none">
-                <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                <span>加入观战</span>
-            </button>
-            <button id="unspectateBtn" class="btn btn-secondary btn-lg" style="flex:1;display:none">
-                <span>退出观战</span>
             </button>
         </div>
     </div>

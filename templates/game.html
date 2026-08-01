@@ -14,6 +14,10 @@
                 <div class="stat-val" id="statRound">1</div>
                 <div class="stat-lbl">回合</div>
             </div>
+            <div class="stat-box" id="statMultBox" style="display:none">
+                <div class="stat-val" id="statMult" style="color:var(--red)">×2</div>
+                <div class="stat-lbl">倍率</div>
+            </div>
             <div class="stat-box">
                 <div class="stat-val" id="statCities">100</div>
                 <div class="stat-lbl">城池</div>
@@ -87,24 +91,7 @@
                             </button>
                         </div>
                     </div>
-                    <!-- 猜拳按钮（默认隐藏） -->
-                    <div id="gestureArea" style="display:none;margin-top:10px">
-                        <div class="section-title" style="margin-bottom:8px">选择手势</div>
-                        <div class="action-grid">
-                            <button class="act-btn gesture-btn" data-gesture="rock">
-                                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></svg>
-                                石头
-                            </button>
-                            <button class="act-btn gesture-btn" data-gesture="paper">
-                                <svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
-                                布
-                            </button>
-                            <button class="act-btn gesture-btn" data-gesture="scissors">
-                                <svg viewBox="0 0 24 24"><path d="M6 9l6-6 6 6M12 3v18"/></svg>
-                                剪刀
-                            </button>
-                        </div>
-                    </div>
+                    <!-- 猜拳已移除：打野现在为50%概率自动判定 -->
                     <!-- 提示/已提交状态 -->
                     <div id="actionHint" style="display:none;margin-top:10px;text-align:center;font-size:13px;color:var(--text-dim);padding:8px;background:var(--bg-input);border-radius:6px"></div>
                 </div>
