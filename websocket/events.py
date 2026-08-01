@@ -499,49 +499,40 @@ def _register():
 
         _do_duel_shot(room_id, player_id, shots)
 
-    @socketio.on('duel_reject')
-    def on_duel_reject(data):
-        """被约战方拒绝约战"""
+    @socketio.on('duel_accept')
+    def on_duel_accept(data):
+        """被约战方接受约战，开始轮盘赌"""
         room_id = str(data.get('room_id', '')).strip()
         player_id = data.get('player_id', '')
         room = room_manager.get_room(room_id)
         if not room or not room.game_state or not room.game_state.duel:
             return
         duel = room.game_state.duel
-        # 只有被约战方(非initiator)才能拒绝
+        # 只有被约战方才能接受
         if duel.get('target') != player_id:
             return
-        bet = duel['bet']
-        tribute = int(bet * 0.5)  # 50%赌注贡奉
-        rejecter = room.players.get(player_id)
-        # 找对方
-        other_id = duel['initiator']
-        other = room.players.get(other_id)
-        if rejecter and other and tribute > 0:
-            rejecter.change_cities(-tribute)
-            other.change_cities(tribute)
-        room.game_state.duel = None
-        # 如果还有待处理的约战，继续；否则回到正常流程
-        if hasattr(room.game_state, '_pending_duels') and room.game_state._pending_duels:
-            next_duel = room.game_state._pending_duels.pop(0)
-            _start_duel(room_id, next_duel)
-        else:
-            if hasattr(room.game_state, '_pending_round_result') and room.game_state._pending_round_result:
-                pending = room.game_state._pending_round_result
-                pending['players'] = {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
-                _emit('round_result', pending, room=room_id)
-                room.game_state._pending_round_result = None
-                _prefetch_ai_decisions(room_id)
-                _auto_ready_ai(room_id)
-            room.game_state.phase = GamePhase.MEETING
-            if hasattr(room.game_state, 'ready_players'):
-                room.game_state.ready_players = set()
-        _emit('duel_rejected', {
-            'rejecter_name': rejecter.name if rejecter else '',
-            'other_name': other.name if other else '',
-            'tribute': tribute,
-            'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
-        }, room=room_id)
+        duel_info = {
+            'initiator': duel['initiator'],
+            'initiator_name': duel['initiator_name'],
+            'target': duel['target'],
+            'target_name': duel['target_name'],
+            'bet': duel['bet'],
+        }
+        _accept_duel(room_id, duel_info)
+
+    @socketio.on('duel_reject')
+    def on_duel_reject(data):
+        """被约战方拒绝约战，交50%赌注"""
+        room_id = str(data.get('room_id', '')).strip()
+        player_id = data.get('player_id', '')
+        room = room_manager.get_room(room_id)
+        if not room or not room.game_state or not room.game_state.duel:
+            return
+        duel = room.game_state.duel
+        # 只有被约战方才能拒绝
+        if duel.get('target') != player_id:
+            return
+        _reject_duel(room_id)
 
     @socketio.on('ready_next_round')
     def on_ready_next_round(data):
@@ -887,7 +878,7 @@ def _process_round(room_id):
 
 
 def _start_duel(room_id, duel_info):
-    """启动约战"""
+    """发起约战请求：先询问被约战方是否接受"""
     room = room_manager.get_room(room_id)
     if not room or not room.game_state:
         return
@@ -896,35 +887,128 @@ def _start_duel(room_id, duel_info):
     target = duel_info['target']
     bet = duel_info['bet']
 
-    # 统一10发转轮，前三枪空包弹
-    chambers = 10
-    bullet_pos = random.randint(3, 9)
-
+    # 保存待处理的约战信息
     room.game_state.duel = {
         'initiator': initiator,
         'initiator_name': duel_info['initiator_name'],
         'target': target,
         'target_name': duel_info['target_name'],
         'bet': bet,
-        'chambers': chambers,
-        'bullet_pos': bullet_pos,
-        'fired': 0,
-        'current_turn': initiator  # 发起者先开枪
     }
     room.game_state.phase = GamePhase.DUEL
 
-    _emit('duel_started', {
+    # 通知双方：被约战方需要选择接受/拒绝
+    _emit('duel_request', {
         'initiator': initiator,
         'initiator_name': duel_info['initiator_name'],
         'target': target,
         'target_name': duel_info['target_name'],
         'bet': bet,
+    }, room=room_id)
+
+    # 如果被约战方是AI，自动决策
+    target_player = room.players.get(target)
+    if target_player and target_player.is_ai:
+        # AI策略：城池>bet*1.5时有70%概率接受，否则50%接受
+        accept_chance = 0.7 if target_player.cities > bet * 1.5 else 0.5
+        if random.random() < accept_chance:
+            # 延迟1秒后自动接受
+            threading.Timer(1.0, lambda: _accept_duel(room_id, duel_info)).start()
+        else:
+            # 延迟1秒后自动拒绝
+            threading.Timer(1.0, lambda: _reject_duel(room_id)).start()
+
+
+def _accept_duel(room_id, duel_info):
+    """被约战方接受，开始轮盘赌"""
+    room = room_manager.get_room(room_id)
+    if not room or not room.game_state or not room.game_state.duel:
+        return
+    if room.game_state.phase != GamePhase.DUEL:
+        return
+
+    # 统一10发转轮，前三枪空包弹
+    chambers = 10
+    bullet_pos = random.randint(3, 9)
+
+    duel = room.game_state.duel
+    duel['chambers'] = chambers
+    duel['bullet_pos'] = bullet_pos
+    duel['fired'] = 0
+    duel['current_turn'] = duel['initiator']  # 发起者先开枪
+
+    _emit('duel_started', {
+        'initiator': duel['initiator'],
+        'initiator_name': duel['initiator_name'],
+        'target': duel['target'],
+        'target_name': duel['target_name'],
+        'bet': duel['bet'],
         'chambers': chambers,
         'bullet_pos': bullet_pos,
-        'current_turn': initiator
+        'current_turn': duel['initiator']
     }, room=room_id)
     # 如果发起者是AI，自动开枪
     _auto_duel_shot(room_id)
+
+
+def _reject_duel(room_id):
+    """被约战方拒绝，交50%赌注"""
+    room = room_manager.get_room(room_id)
+    if not room or not room.game_state or not room.game_state.duel:
+        return
+    if room.game_state.phase != GamePhase.DUEL:
+        return
+
+    duel = room.game_state.duel
+    bet = duel['bet']
+    tribute = int(bet * 0.5)
+    rejecter = room.players.get(duel['target'])
+    other = room.players.get(duel['initiator'])
+    if rejecter and other and tribute > 0:
+        rejecter.change_cities(-tribute)
+        other.change_cities(tribute)
+    room.game_state.duel = None
+
+    reject_data = {
+        'rejecter_name': rejecter.name if rejecter else '',
+        'other_name': other.name if other else '',
+        'tribute': tribute,
+        'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
+    }
+    _emit('duel_rejected', reject_data, room=room_id)
+
+    # 继续处理下一个约战或回到正常流程
+    _after_duel_end(room_id)
+
+
+def _after_duel_end(room_id):
+    """约战结束后的统一处理：检查下一个约战或回到正常流程"""
+    room = room_manager.get_room(room_id)
+    if not room or not room.game_state:
+        return
+
+    # 检查是否有人因约战死亡
+    alive = [p for p in room.players.values() if p.is_alive]
+    if len(alive) <= 1:
+        winner_p = alive[0] if alive else None
+        room.game_state.phase = GamePhase.FINISHED
+        _emit('game_ended', {'winner': winner_p.to_dict() if winner_p else None}, room=room_id)
+        return
+
+    if hasattr(room.game_state, '_pending_duels') and room.game_state._pending_duels:
+        next_duel = room.game_state._pending_duels.pop(0)
+        _start_duel(room_id, next_duel)
+    else:
+        if hasattr(room.game_state, '_pending_round_result') and room.game_state._pending_round_result:
+            pending = room.game_state._pending_round_result
+            pending['players'] = {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
+            _emit('round_result', pending, room=room_id)
+            room.game_state._pending_round_result = None
+            _prefetch_ai_decisions(room_id)
+            _auto_ready_ai(room_id)
+        room.game_state.phase = GamePhase.MEETING
+        if hasattr(room.game_state, 'ready_players'):
+            room.game_state.ready_players = set()
 
 
 def _start_auction(room_id):
@@ -1400,23 +1484,7 @@ def _do_duel_shot(room_id, player_id, shots):
             return
 
         # 如果还有待处理的约战，继续下一场
-        if hasattr(room.game_state, '_pending_duels') and room.game_state._pending_duels:
-            next_duel = room.game_state._pending_duels.pop(0)
-            _start_duel(room_id, next_duel)
-        else:
-            # 所有约战结束，发送回合小结并回到会议阶段
-            if hasattr(room.game_state, '_pending_round_result') and room.game_state._pending_round_result:
-                pending = room.game_state._pending_round_result
-                pending['players'] = {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
-                _emit('round_result', pending, room=room_id)
-                room.game_state._pending_round_result = None
-                # AI预请求：约战结束后也预请求决策
-                _prefetch_ai_decisions(room_id)
-                # AI自动ready
-                _auto_ready_ai(room_id)
-            room.game_state.phase = GamePhase.MEETING
-            if hasattr(room.game_state, 'ready_players'):
-                room.game_state.ready_players = set()
+        _after_duel_end(room_id)
     else:
         duel['current_turn'] = duel['target'] if player_id == duel['initiator'] else duel['initiator']
         _emit('duel_next_turn', {
