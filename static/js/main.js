@@ -710,6 +710,8 @@ function initGame() {
     });
 
     // 约战事件
+    socket.on('duel_request', data => showDuelRequest(data));
+
     socket.on('duel_started', data => showDuelPanel(data));
 
     socket.on('duel_shot_result', data => onDuelShotResult(data));
@@ -720,7 +722,7 @@ function initGame() {
 
     socket.on('duel_rejected', data => {
         // 显示拒绝提示
-        const rejectedMsg = data.player_name + ' 拒绝了约战' + (data.forfeited_cities ? '，贡奉了 ' + data.forfeited_cities + ' 城池' : '');
+        const rejectedMsg = (data.rejecter_name || '?') + ' 拒绝了约战，贡奉了 ' + (data.tribute || 0) + ' 城池给 ' + (data.other_name || '?');
         toast(rejectedMsg, 'info');
         // 隐藏约战面板
         const dp = document.getElementById('duelPanel');
@@ -728,9 +730,6 @@ function initGame() {
         // 记录到上帝视角
         const round = parseInt(document.getElementById('statRound')?.textContent || '1');
         _godViewHistory.push({ round: round, type: 'duel', text: '[约战拒绝] ' + rejectedMsg });
-        // 恢复行动面板
-        const ap = document.getElementById('actionPanel');
-        if (ap) ap.style.display = 'block';
     });
 
     // 拍卖事件
@@ -1842,6 +1841,83 @@ function hideAuctionPanel() {
     if (aup) aup.style.display = 'none';
 }
 
+function showDuelRequest(data) {
+    // 被约战方收到约战请求，显示接受/拒绝
+    const ap = document.getElementById('actionPanel');
+    const mp = document.getElementById('meetingPanel');
+    const dp = document.getElementById('duelPanel');
+    const aup = document.getElementById('auctionPanel');
+    if (ap) ap.style.display = 'none';
+    if (mp) mp.style.display = 'none';
+    if (aup) aup.style.display = 'none';
+    if (dp) dp.style.display = 'block';
+
+    const phaseEl = document.getElementById('statPhase');
+    if (phaseEl) phaseEl.textContent = '约战';
+
+    window._duelInitiator = data.initiator;
+    window._duelTarget = data.target;
+
+    const tribute = Math.floor(data.bet * 0.5);
+    const isTarget = myPlayerId === data.target;
+
+    const info = document.getElementById('duelInfo');
+    if (info) {
+        info.innerHTML = `
+            <div style="text-align:center;font-size:15px;margin-bottom:8px">
+                <strong style="color:var(--red)">${esc(data.initiator_name)}</strong>
+                向
+                <strong style="color:var(--orange)">${esc(data.target_name)}</strong>
+                发起约战
+            </div>
+            <div style="text-align:center;font-size:14px;color:var(--gold)">
+                赌注：${data.bet} 城池
+            </div>
+        `;
+    }
+
+    // 清空弹仓区
+    const chambersEl = document.getElementById('duelChambers');
+    if (chambersEl) chambersEl.innerHTML = '';
+    const shotsInput = document.getElementById('duelShotsInput');
+    if (shotsInput) shotsInput.value = 1;
+
+    const turnInfo = document.getElementById('duelTurnInfo');
+    const buttons = document.getElementById('duelButtons');
+    const waitInfo = document.getElementById('duelWaitInfo');
+    if (buttons) buttons.style.display = 'none';
+
+    if (isTarget) {
+        // 被约战方：显示接受/拒绝按钮
+        if (turnInfo) turnInfo.innerHTML = '<span style="color:var(--orange)">你被约战了！</span>';
+        if (waitInfo) {
+            waitInfo.style.display = 'block';
+            waitInfo.innerHTML = `
+                <div style="margin-bottom:10px;text-align:center;font-size:13px;color:var(--text-dim)">
+                    拒绝需贡奉 ${tribute} 城池给对方
+                </div>
+                <div style="display:flex;gap:8px;justify-content:center">
+                    <button class="btn btn-danger" style="padding:8px 20px;font-size:14px" onclick="acceptDuel()">接受约战</button>
+                    <button class="btn btn-outline" style="padding:8px 20px;font-size:14px;color:var(--red);border-color:var(--red)" onclick="rejectDuel()">拒绝（贡奉${tribute}城池）</button>
+                </div>
+            `;
+        }
+    } else {
+        // 发起方或其他玩家：等待
+        if (turnInfo) turnInfo.innerHTML = '';
+        if (waitInfo) {
+            waitInfo.style.display = 'block';
+            waitInfo.innerHTML = isTarget ? '' : '<div>等待对方回应约战...</div>';
+        }
+    }
+}
+
+function acceptDuel() {
+    if (!socket) return;
+    socket.emit('duel_accept', { room_id: myRoomId, player_id: myPlayerId });
+    toast('已接受约战', 'info');
+}
+
 function showDuelPanel(data) {
     const ap = document.getElementById('actionPanel');
     const mp = document.getElementById('meetingPanel');
@@ -1962,18 +2038,16 @@ function showDuelWait() {
     if (waitInfo) waitInfo.style.display = 'block';
 }
 
-// 被约战方显示拒绝按钮
+// 被约战方在轮盘赌中等待
 function showDuelTargetWait(data) {
     const turnInfo = document.getElementById('duelTurnInfo');
     const buttons = document.getElementById('duelButtons');
     const waitInfo = document.getElementById('duelWaitInfo');
     if (turnInfo) turnInfo.innerHTML = '';
     if (buttons) buttons.style.display = 'none';
-    // 显示拒绝按钮
     if (waitInfo) {
         waitInfo.style.display = 'block';
-        waitInfo.innerHTML = '<div style="margin-bottom:10px">约战进行中，请等待...</div>' +
-            '<button class="btn btn-outline" style="padding:6px 16px;font-size:13px;color:var(--red);border-color:var(--red)" onclick="rejectDuel()">拒绝约战</button>';
+        waitInfo.innerHTML = '<div style="margin-bottom:10px">约战进行中，请等待...</div>';
     }
 }
 
