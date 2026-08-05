@@ -117,7 +117,8 @@ class Room:
     created_at: float = field(default_factory=time.time)
     max_players: int = 8
     allow_join_after_start: bool = False  # 是否允许游戏开始后加入
-    
+    password: str = ''  # 房间密码（空串=无密码）
+
     def to_dict(self, player_id: str = None) -> Dict:
         """转换为字典"""
         is_spectator = False
@@ -133,6 +134,7 @@ class Room:
             "player_count": len(self.players),
             "max_players": self.max_players,
             "allow_join_after_start": self.allow_join_after_start,
+            "has_password": bool(self.password),
             "game_state": self.game_state.to_dict(is_spectator) if self.game_state else None,
             "created_at": self.created_at,
         }

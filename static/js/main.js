@@ -304,11 +304,29 @@ async function createRoom(name) {
 }
 
 async function joinRoom(name, code) {
+    // 先检查房间是否需要密码
+    try {
+        const checkRes = await fetch('/api/room/' + code + '/check');
+        const checkData = await checkRes.json();
+        if (!checkData.success) {
+            toast(checkData.message || '房间不存在', 'error');
+            return;
+        }
+        if (checkData.has_password) {
+            const pw = prompt('该房间设有密码，请输入密码：');
+            if (pw === null) return; // 用户取消
+            return _doJoinRoom(name, code, pw);
+        }
+    } catch (e) {}
+    _doJoinRoom(name, code, '');
+}
+
+async function _doJoinRoom(name, code, password) {
     try {
         const res = await fetch('/api/rooms/' + code + '/join', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
-            body: JSON.stringify({ player_name: name })
+            body: JSON.stringify({ player_name: name, password: password })
         });
         const data = await res.json();
         if (data.success) {
@@ -320,6 +338,10 @@ async function joinRoom(name, code) {
             } else {
                 window.location.href = '/lobby/' + myRoomId + '?pid=' + myPlayerId + tokenParam;
             }
+        } else if (data.need_password) {
+            const pw = prompt('密码错误，请重新输入：');
+            if (pw === null) return;
+            _doJoinRoom(name, code, pw);
         } else {
             toast(data.message || '加入失败', 'error');
         }
@@ -379,10 +401,20 @@ function initLobby() {
     socket.on('lobby_update', data => {
         renderLobbyPlayers(data.players || []);
         updateLobbyButtons(data.players || []);
-        // 同步「允许中途加入」开关状态
-        const toggle = document.getElementById('allowJoinToggle');
-        if (toggle && data.allow_join_after_start !== undefined) {
-            toggle.checked = data.allow_join_after_start;
+        // 保存玩家列表供房间设置使用
+        socket._lobbyPlayers = data.players || {};
+        // 同步房间设置状态
+        if (!window._roomSettings) window._roomSettings = {};
+        if (data.allow_join_after_start !== undefined) {
+            window._roomSettings.allow_join_after_start = data.allow_join_after_start;
+            const toggle = document.getElementById('allowJoinToggle');
+            if (toggle) toggle.checked = data.allow_join_after_start;
+        }
+        if (data.has_password !== undefined) window._roomSettings.has_password = data.has_password;
+        if (data.max_players !== undefined) {
+            window._roomSettings.max_players = data.max_players;
+            const maxInput = document.getElementById('roomMaxPlayersInput');
+            if (maxInput) maxInput.value = data.max_players;
         }
     });
 
@@ -434,6 +466,22 @@ function initLobby() {
         socket.emit('add_ai_bot', { room_id: roomId, player_id: myPlayerId, config: aiConfig });
     });
 
+    // 房间设置按钮
+    const roomSettingsBtn = document.getElementById('roomSettingsBtn');
+    if (roomSettingsBtn) roomSettingsBtn.addEventListener('click', () => openRoomSettings());
+
+    // 被踢通知
+    socket.on('kicked', data => {
+        toast(data.message || '你已被踢出房间', 'error');
+        setTimeout(() => { window.location.href = '/'; }, 1500);
+    });
+    socket.on('player_kicked', data => {
+        toast(data.kicked_name + ' 已被踢出房间', 'info');
+    });
+    socket.on('host_transferred', data => {
+        toast('房主已转让给 ' + data.new_host_name, 'info');
+    });
+
     // 聊天
     setupChat();
 
@@ -448,7 +496,12 @@ async function fetchLobbyState(roomId) {
         if (data.success) {
             renderLobbyPlayers(data.room.players || []);
             updateLobbyButtons(data.room.players || []);
-            // 同步初始开关状态
+            // 保存房间设置状态
+            window._roomSettings = {
+                allow_join_after_start: data.room.allow_join_after_start,
+                has_password: data.room.has_password,
+                max_players: data.room.max_players,
+            };
             const toggle = document.getElementById('allowJoinToggle');
             if (toggle && data.room.allow_join_after_start !== undefined) {
                 toggle.checked = data.room.allow_join_after_start;
@@ -568,18 +621,91 @@ function updateLobbyButtons(players) {
         addAiBtn.style.display = aiCount < 4 ? '' : 'none';
     }
 
-    // 「允许中途加入」开关：仅房主可见
-    const allowJoinWrap = document.getElementById('allowJoinWrap');
-    const allowJoinToggle = document.getElementById('allowJoinToggle');
-    if (allowJoinWrap) {
-        allowJoinWrap.style.display = me.is_host ? '' : 'none';
+    // 房间设置按钮：仅房主可见
+    const roomSettingsBtn = document.getElementById('roomSettingsBtn');
+    if (roomSettingsBtn) {
+        roomSettingsBtn.style.display = me.is_host ? '' : 'none';
     }
-    if (allowJoinToggle && !allowJoinToggle._bound) {
-        allowJoinToggle._bound = true;
-        allowJoinToggle.addEventListener('change', () => {
-            socket.emit('toggle_allow_join', { room_id: myRoomId, player_id: myPlayerId, allow: allowJoinToggle.checked });
+}
+
+// ===== 房间设置弹窗 =====
+function openRoomSettings() {
+    const modal = document.getElementById('roomSettingsModal');
+    if (!modal) return;
+    modal.style.display = '';
+
+    // 同步当前状态
+    const toggle = document.getElementById('allowJoinToggle');
+    if (toggle && window._roomSettings) {
+        toggle.checked = window._roomSettings.allow_join_after_start;
+    }
+    const pwInput = document.getElementById('roomPasswordInput');
+    if (pwInput) pwInput.value = '';
+    const maxInput = document.getElementById('roomMaxPlayersInput');
+    if (maxInput && window._roomSettings) maxInput.value = window._roomSettings.max_players;
+
+    // 填充转让房主和踢人下拉
+    const arr = Object.values(socket._lobbyPlayers || {});
+    const nonSelfNonAi = arr.filter(p => p.id !== myPlayerId && !p.is_ai && !p.is_spectator);
+    const nonSelfNonAiAll = arr.filter(p => p.id !== myPlayerId && !p.is_ai);
+
+    const transferSel = document.getElementById('transferHostSelect');
+    if (transferSel) {
+        transferSel.innerHTML = '<option value="">-- 选择玩家 --</option>';
+        nonSelfNonAi.forEach(p => {
+            transferSel.innerHTML += `<option value="${p.id}">${esc(p.name)}</option>`;
         });
     }
+    const kickSel = document.getElementById('kickPlayerSelect');
+    if (kickSel) {
+        kickSel.innerHTML = '<option value="">-- 选择玩家 --</option>';
+        nonSelfNonAiAll.forEach(p => {
+            kickSel.innerHTML += `<option value="${p.id}">${esc(p.name)}</option>`;
+        });
+    }
+
+    // 绑定事件（只绑一次）
+    if (!window._roomSettingsBound) {
+        window._roomSettingsBound = true;
+
+        const toggleEl = document.getElementById('allowJoinToggle');
+        if (toggleEl) toggleEl.addEventListener('change', () => {
+            socket.emit('room_settings', { room_id: myRoomId, player_id: myPlayerId, allow_join_after_start: toggleEl.checked });
+        });
+
+        document.getElementById('savePasswordBtn')?.addEventListener('click', () => {
+            const pw = document.getElementById('roomPasswordInput').value.trim();
+            socket.emit('room_settings', { room_id: myRoomId, player_id: myPlayerId, password: pw });
+            toast(pw ? '密码已设置' : '密码已移除', 'info');
+        });
+
+        document.getElementById('saveMaxPlayersBtn')?.addEventListener('click', () => {
+            const max = parseInt(document.getElementById('roomMaxPlayersInput').value) || 8;
+            socket.emit('room_settings', { room_id: myRoomId, player_id: myPlayerId, max_players: max });
+        });
+
+        document.getElementById('transferHostBtn')?.addEventListener('click', () => {
+            const targetId = document.getElementById('transferHostSelect').value;
+            if (!targetId) { toast('请选择玩家', 'error'); return; }
+            if (!confirm('确定转让房主？')) return;
+            socket.emit('transfer_host', { room_id: myRoomId, player_id: myPlayerId, target_id: targetId });
+            closeRoomSettings();
+        });
+
+        document.getElementById('kickPlayerBtn')?.addEventListener('click', () => {
+            const targetId = document.getElementById('kickPlayerSelect').value;
+            if (!targetId) { toast('请选择玩家', 'error'); return; }
+            const name = document.getElementById('kickPlayerSelect').selectedOptions[0]?.text || '';
+            if (!confirm('确定踢出 ' + name + '？')) return;
+            socket.emit('kick_player', { room_id: myRoomId, player_id: myPlayerId, target_id: targetId });
+            closeRoomSettings();
+        });
+    }
+}
+
+function closeRoomSettings() {
+    const modal = document.getElementById('roomSettingsModal');
+    if (modal) modal.style.display = 'none';
 }
 
 // ===== 游戏页 =====
@@ -1364,7 +1490,13 @@ function toggleGodView() {
 
 // 技能卡需要目标的类型和卡牌ID
 const SKILL_NEEDS_TARGET = ['attack', 'special'];
-const SKILL_NO_TARGET_IDS = ['disguise', 'first_aid'];  // 特殊类中不需要目标的卡
+const SKILL_NO_TARGET_IDS = [
+    'disguise', 'first_aid',          // 原有
+    'plus_damage', 'fierce_attack',   // 攻击类自身buff
+    'lifesteal', 'damage_boost',      // 攻击类自身buff
+    'arrow_rain',                     // 攻击类AOE
+    'double_action', 'upgrade',       // 特殊类自身buff
+];
 
 function useSkillCard(idx) {
     const area = document.getElementById('skillCardArea');

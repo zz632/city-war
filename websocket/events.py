@@ -240,12 +240,11 @@ def _register():
             'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
         }, room=room_id)
 
-    @socketio.on('toggle_allow_join')
-    def on_toggle_allow_join(data):
-        """房主切换是否允许中途加入"""
+    @socketio.on('room_settings')
+    def on_room_settings(data):
+        """房主修改房间设置"""
         room_id = str(data.get('room_id', '')).strip()
         player_id = data.get('player_id', '')
-        allow = bool(data.get('allow', False))
 
         room = room_manager.get_room(room_id)
         if not room or player_id not in room.players:
@@ -253,10 +252,95 @@ def _register():
         if room.host_id != player_id:
             return
 
-        room.allow_join_after_start = allow
+        changed = False
+        if 'allow_join_after_start' in data:
+            room.allow_join_after_start = bool(data['allow_join_after_start'])
+            changed = True
+        if 'password' in data:
+            room.password = str(data['password']).strip()
+            changed = True
+        if 'max_players' in data:
+            new_max = int(data['max_players'])
+            # 不能小于当前人数，不能小于2，不能大于8
+            new_max = max(len(room.players), max(2, min(8, new_max)))
+            room.max_players = new_max
+            changed = True
+
+        if changed:
+            _emit('lobby_update', {
+                'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()},
+                'allow_join_after_start': room.allow_join_after_start,
+                'has_password': bool(room.password),
+                'max_players': room.max_players,
+            }, room=room_id)
+
+    @socketio.on('transfer_host')
+    def on_transfer_host(data):
+        """房主转让"""
+        room_id = str(data.get('room_id', '')).strip()
+        player_id = data.get('player_id', '')
+        target_id = data.get('target_id', '')
+
+        room = room_manager.get_room(room_id)
+        if not room or player_id not in room.players:
+            return
+        if room.host_id != player_id:
+            return
+        if target_id not in room.players or target_id == player_id:
+            return
+
+        target = room.players[target_id]
+        if target.is_ai or target.is_spectator:
+            return
+
+        # 转让房主
+        room.players[player_id].is_host = False
+        room.host_id = target_id
+        target.is_host = True
+
         _emit('lobby_update', {
             'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()},
-            'allow_join_after_start': allow
+        }, room=room_id)
+        _emit('host_transferred', {
+            'new_host_name': target.name,
+            'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()},
+        }, room=room_id)
+
+    @socketio.on('kick_player')
+    def on_kick_player(data):
+        """房主踢人"""
+        room_id = str(data.get('room_id', '')).strip()
+        player_id = data.get('player_id', '')
+        target_id = data.get('target_id', '')
+
+        room = room_manager.get_room(room_id)
+        if not room or player_id not in room.players:
+            return
+        if room.host_id != player_id:
+            return
+        if target_id not in room.players or target_id == player_id:
+            return
+
+        target = room.players[target_id]
+        if target.is_ai:
+            return
+
+        target_name = target.name
+        # 从房间移除
+        if target_id in room.players:
+            del room.players[target_id]
+        if target_id in room_manager.players:
+            del room_manager.players[target_id]
+
+        # 通知被踢的玩家
+        _emit('kicked', {'message': '你已被房主踢出房间'}, room=target_id)
+        # 通知房间内其他人
+        _emit('lobby_update', {
+            'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()},
+        }, room=room_id)
+        _emit('player_kicked', {
+            'kicked_name': target_name,
+            'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()},
         }, room=room_id)
 
     @socketio.on('leave_game')
@@ -571,8 +655,14 @@ def _register():
 
 # 需要目标的技能卡类型
 _SKILL_NEEDS_TARGET = {'attack', 'special'}
-# 特殊类中不需要目标的卡ID
-_SKILL_NO_TARGET_IDS = {'disguise', 'first_aid'}
+# 攻击类/特殊类中不需要目标的卡ID
+_SKILL_NO_TARGET_IDS = {
+    'disguise', 'first_aid',          # 原有
+    'plus_damage', 'fierce_attack',   # 攻击类自身buff
+    'lifesteal', 'damage_boost',      # 攻击类自身buff
+    'arrow_rain',                     # 攻击类AOE，无需指定目标
+    'double_action', 'upgrade',       # 特殊类自身buff
+}
 
 
 def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
@@ -597,53 +687,118 @@ def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
     if not skill_card:
         return False, ''
 
+    skill_type_key = skill_card.get('skill_type', skill_id)
     skill_type = skill_card.get('type', '')
     effect = skill_card.get('effect', {})
     result_msg = player.name + ' 使用了【' + skill_card.get('name', '技能卡') + '」'
 
-    # 攻击类 - 需要目标
-    if skill_type == 'attack' and target_id:
-        target = room.players.get(target_id)
-        if not target or not target.is_alive:
-            return False, ''
-        damage = effect.get('damage', 0)
-        target.change_cities(-damage)
-        result_msg += '，对 ' + target.name + ' 造成 ' + str(damage) + ' 伤害'
+    # 计算回合倍率（数值翻倍：第8/16/24轮 ×2/×4/×8）
+    from game.manager import get_multiplier
+    multiplier = get_multiplier(room.game_state.round)
 
-        if effect.get('self_damage'):
-            player.change_cities(-effect['self_damage'])
-            result_msg += '，自身损失 ' + str(effect['self_damage']) + ' 城池'
+    # 无懈可击拦截：有害技能卡针对有 invulnerable 状态的玩家时，抵消效果
+    _HARMFUL_SKILL_IDS = {'fire_attack', 'surprise_attack', 'crossbow', 'siege', 'poison', 'freeze',
+                          'steal_card', 'tribute', 'reverse', 'arrow_rain'}
+    if target_id and skill_type_key in _HARMFUL_SKILL_IDS:
+        target_for_check = room.players.get(target_id)
+        if target_for_check and target_for_check.is_alive and target_for_check.status_effects.get('invulnerable'):
+            # 抵消技能效果，消耗无懈可击状态
+            target_for_check.status_effects.pop('invulnerable', None)
+            if skill_card in player.skills:
+                player.skills.remove(skill_card)
+            result_msg += '，但被' + target_for_check.name + '的无懈可击卡抵消！'
+            _emit('skill_used', {
+                'player_id': player_id,
+                'player_name': player.name,
+                'skill_name': skill_card.get('name', '技能卡'),
+                'message': result_msg,
+                'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
+            }, room=room_id)
+            return True, result_msg
 
-        if effect.get('ignore_defend'):
-            player.status_effects['ignore_defend'] = True
-            result_msg += '（无视守城）'
+    # ===== 攻击类 =====
+    if skill_type == 'attack':
+        # --- 需要目标的攻击效果 ---
+        if target_id:
+            target = room.players.get(target_id)
+            if not target or not target.is_alive:
+                return False, ''
 
-        if effect.get('multi_target'):
-            other_targets = [pid for pid, p in room.players.items()
-                             if p.is_alive and not p.is_spectator
-                             and pid != target_id and pid != player_id]
-            if other_targets:
-                second_id = random.choice(other_targets)
-                second = room.players[second_id]
-                second_damage = effect.get('damage', 0)
-                second.change_cities(-second_damage)
-                result_msg += '，对 ' + second.name + ' 造成 ' + str(second_damage) + ' 伤害'
+            damage = effect.get('damage', 0) * multiplier
+            if damage:
+                target.change_cities(-damage)
+                result_msg += '，对 ' + target.name + ' 造成 ' + str(damage) + ' 伤害'
 
-        if effect.get('stun'):
-            target.status_effects['stun'] = 2
-            if target_id in room.game_state.actions:
-                room.game_state.actions[target_id] = {
-                    'player_id': target_id,
-                    'action_type': 'skip',
-                    'target_id': None,
-                    'bet': 0,
-                    'timestamp': room.game_state.actions[target_id].get('timestamp', 0)
-                }
-            result_msg += '，' + target.name + ' 下回合无法行动'
+            if effect.get('self_damage'):
+                sd = effect['self_damage'] * multiplier
+                player.change_cities(-sd)
+                result_msg += '，自身损失 ' + str(sd) + ' 城池'
 
-    # 防御类
+            if effect.get('ignore_defend'):
+                player.status_effects['ignore_defend'] = True
+                result_msg += '（无视守城）'
+
+            if effect.get('multi_target'):
+                other_targets = [pid for pid, p in room.players.items()
+                                 if p.is_alive and not p.is_spectator
+                                 and pid != target_id and pid != player_id]
+                if other_targets:
+                    second_id = random.choice(other_targets)
+                    second = room.players[second_id]
+                    second_damage = effect.get('damage', 0) * multiplier
+                    second.change_cities(-second_damage)
+                    result_msg += '，对 ' + second.name + ' 造成 ' + str(second_damage) + ' 伤害'
+
+            if effect.get('stun'):
+                target.status_effects['stun'] = 2
+                if target_id in room.game_state.actions:
+                    room.game_state.actions[target_id] = {
+                        'player_id': target_id,
+                        'action_type': 'skip',
+                        'target_id': None,
+                        'bet': 0,
+                        'timestamp': room.game_state.actions[target_id].get('timestamp', 0)
+                    }
+                result_msg += '，' + target.name + ' 下回合无法行动'
+
+        # --- 自身buff攻击效果（无需目标）---
+        if effect.get('permanent_damage_bonus'):
+            bonus = effect['permanent_damage_bonus']
+            player.status_effects['permanent_damage_bonus'] = player.status_effects.get('permanent_damage_bonus', 0) + bonus
+            result_msg += '，每轮伤害永久+' + str(bonus)
+
+        if effect.get('attack_multiplier'):
+            mult = effect['attack_multiplier']
+            player.status_effects['attack_multiplier'] = player.status_effects.get('attack_multiplier', 1) * mult
+            result_msg += '，攻击伤害永久×' + str(mult)
+
+        if effect.get('lifesteal_percent'):
+            pct = effect['lifesteal_percent']
+            player.status_effects['lifesteal_percent'] = player.status_effects.get('lifesteal_percent', 0) + pct
+            result_msg += '，攻击时永久吸取' + str(int(pct * 100)) + '%总血量'
+
+        if effect.get('permanent_attack_bonus'):
+            bonus = effect['permanent_attack_bonus']
+            player.status_effects['permanent_attack_bonus'] = player.status_effects.get('permanent_attack_bonus', 0) + bonus
+            result_msg += '，攻击伤害永久+' + str(int(bonus * 100)) + '%'
+
+        if effect.get('aoe_damage'):
+            base_dmg = effect.get('aoe_damage', 0) * multiplier
+            per_player = effect.get('aoe_per_player', 0) * multiplier
+            n_other = sum(1 for pid, p in room.players.items() if pid != player_id and p.is_alive and not p.is_spectator)
+            total_dmg = base_dmg + per_player * n_other
+            total_dealt = 0
+            for pid, p in room.players.items():
+                if pid != player_id and p.is_alive and not p.is_spectator:
+                    p.change_cities(-total_dmg)
+                    total_dealt += total_dmg
+            gain = total_dealt // 3
+            player.change_cities(gain)
+            result_msg += '，对其他' + str(n_other) + '名玩家各造成' + str(total_dmg) + '伤害，获得' + str(gain) + '城池'
+
+    # ===== 防御类 =====
     elif skill_type == 'defense':
-        heal = effect.get('heal', 0)
+        heal = effect.get('heal', 0) * multiplier
         if heal:
             player.change_cities(heal)
             result_msg += '，恢复 ' + str(heal) + ' 城池'
@@ -653,8 +808,9 @@ def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
             result_msg += '，下回合伤害减半'
 
         if effect.get('reflect'):
-            player.status_effects['reflect'] = effect['reflect']
-            result_msg += '，下回合被攻击时反弹 ' + str(effect['reflect']) + ' 伤害'
+            reflect_val = effect['reflect'] * multiplier
+            player.status_effects['reflect'] = reflect_val
+            result_msg += '，下回合被攻击时反弹 ' + str(reflect_val) + ' 伤害'
 
         if effect.get('immune'):
             player.status_effects['immune'] = True
@@ -664,9 +820,53 @@ def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
             player.status_effects['untargetable'] = True
             result_msg += '，下回合无法被选中'
 
-    # 资源类
+        if effect.get('counter_skill'):
+            player.status_effects['invulnerable'] = True
+            result_msg += '，对有害技能卡免疫'
+
+        if effect.get('flat_damage_reduction'):
+            reduction = effect['flat_damage_reduction']
+            player.status_effects['flat_damage_reduction'] = player.status_effects.get('flat_damage_reduction', 0) + reduction
+            result_msg += '，永久减伤' + str(reduction)
+
+        if effect.get('emergency_heal') and not effect.get('heal'):
+            # 不死图腾卡 - 被动触发：存储参数，在 process_round 中检测到死亡时触发
+            if effect.get('post_save_reduction'):
+                # 不死图腾卡：存储完整被动参数
+                player.status_effects['immortal_totem'] = {
+                    'emergency_heal': effect['emergency_heal'] * multiplier,
+                    'post_save_reduction': effect['post_save_reduction'],
+                    'post_save_heal': effect.get('post_save_heal', 0) * multiplier,
+                    'post_save_rounds': effect.get('post_save_rounds', 3)
+                }
+                result_msg += '，设定不死图腾（血量<0时+' + str(effect['emergency_heal'] * multiplier) + '血，' + str(effect.get('post_save_rounds', 3)) + '轮内减伤' + str(int(effect['post_save_reduction'] * 100)) + '%+每轮+' + str(effect.get('post_save_heal', 0) * multiplier) + '）'
+            else:
+                # 普通急救卡 - 即时触发
+                heal_amount = effect['emergency_heal'] * multiplier
+                if player.cities < 0 or not player.is_alive:
+                    player.cities += heal_amount
+                    if player.cities >= 0:
+                        player.is_alive = True
+                        player.is_spectator = False
+                        result_msg += '，紧急恢复 ' + str(heal_amount) + ' 城池，已复活！'
+                    else:
+                        result_msg += '，紧急恢复 ' + str(heal_amount) + ' 城池'
+                else:
+                    result_msg += '，城池数正常，急救卡效果未触发'
+
+        if effect.get('recurring_heal'):
+            amt = effect['recurring_heal'] * multiplier
+            player.status_effects['recurring_heal'] = player.status_effects.get('recurring_heal', 0) + amt
+            result_msg += '，每轮+' + str(amt) + '血'
+
+        if effect.get('permanent_reduction'):
+            red = effect['permanent_reduction']
+            player.status_effects['permanent_reduction'] = player.status_effects.get('permanent_reduction', 0) + red
+            result_msg += '，永久减伤' + str(int(red * 100)) + '%'
+
+    # ===== 资源类 =====
     elif skill_type == 'resource':
-        heal = effect.get('heal', 0)
+        heal = effect.get('heal', 0) * multiplier
         if heal:
             player.change_cities(heal)
             result_msg += '，获得 ' + str(heal) + ' 城池'
@@ -675,7 +875,7 @@ def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
             gain = int(player.cities * percent)
             player.change_cities(gain)
             result_msg += '，获得 ' + str(gain) + ' 城池'
-        steal = effect.get('steal', 0)
+        steal = effect.get('steal', 0) * multiplier
         if steal and steal > 0:
             total = 0
             for pid, p in room.players.items():
@@ -687,7 +887,7 @@ def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
 
         if effect.get('recurring'):
             rounds = effect.get('recurring', 0)
-            amount = effect.get('amount', 0)
+            amount = effect.get('amount', 0) * multiplier
             player.status_effects['recurring'] = {'rounds': rounds, 'amount': amount}
             result_msg += '，接下来 ' + str(rounds) + ' 回合每回合获得 ' + str(amount) + ' 城池'
 
@@ -699,7 +899,45 @@ def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
             player.status_effects['skip_turn'] = True
             result_msg += '，下回合跳过行动'
 
-    # 特殊类
+        # 撒豆成兵卡 - 城池-cost，delay_rounds轮后+delayed_heal
+        if effect.get('delayed_heal'):
+            cost = effect.get('cost', 0)
+            delayed_heal = effect['delayed_heal'] * multiplier
+            delay_rounds = effect.get('delay_rounds', 3)
+            if cost:
+                player.change_cities(-cost)
+            player.status_effects['delay_troops'] = {
+                'heal': delayed_heal,
+                'rounds_left': delay_rounds
+            }
+            result_msg += '，消耗' + str(cost) + '城池，' + str(delay_rounds) + '轮后恢复' + str(delayed_heal) + '城池'
+
+        # 聚宝盆卡 - 城池收益永久×1.25
+        if effect.get('income_multiplier'):
+            mult = effect['income_multiplier']
+            player.status_effects['income_multiplier'] = player.status_effects.get('income_multiplier', 1) * mult
+            result_msg += '，城池收益永久×' + str(mult)
+
+        # 等价交换卡 - -cost城获得bonus_cards张技能卡
+        if effect.get('bonus_cards'):
+            cost = effect.get('cost', 0)
+            bonus_cards = effect['bonus_cards']
+            if player.cities >= cost:
+                player.change_cities(-cost)
+                from game.skills import get_random_skill
+                for _ in range(bonus_cards):
+                    new_card = get_random_skill()
+                    player.skills.append(new_card)
+                result_msg += '，消耗' + str(cost) + '城池获得' + str(bonus_cards) + '张技能卡'
+            else:
+                return False, '城池不足，需要' + str(cost) + '城池'
+
+        # 以逸待劳卡 - 获得收益时×2
+        if effect.get('double_gain'):
+            player.status_effects['double_gain'] = True
+            result_msg += '，获得收益时×2'
+
+    # ===== 特殊类 =====
     elif skill_type == 'special':
         if effect.get('swap'):
             if not target_id:
@@ -745,7 +983,8 @@ def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
             result_msg += '，下回合行动将显示为随机行动'
 
         elif effect.get('emergency_heal'):
-            heal_amount = effect['emergency_heal']
+            # 急救卡 - 城池<0时使用
+            heal_amount = effect['emergency_heal'] * multiplier
             if player.cities < 0 or not player.is_alive:
                 player.cities += heal_amount
                 if player.cities >= 0:
@@ -757,6 +996,53 @@ def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
             else:
                 result_msg += '，城池数正常，急救卡效果未触发'
 
+        elif effect.get('steal_card'):
+            # 瞒天过海卡 - 消耗cost城池偷走指定玩家一张卡
+            cost = effect.get('cost', 30)
+            if player.cities < cost:
+                return False, '城池不足，需要' + str(cost) + '城池'
+            if not target_id:
+                return False, ''
+            target = room.players.get(target_id)
+            if not target or not target.is_alive or not target.skills:
+                return False, '目标玩家没有可偷的卡'
+            player.change_cities(-cost)
+            stolen = random.choice(target.skills)
+            target.remove_skill(stolen.get('id', ''))
+            player.skills.append(stolen)
+            result_msg += '，消耗' + str(cost) + '城池偷走' + target.name + '的【' + stolen.get('name', '技能卡') + '】'
+
+        elif effect.get('demand_card'):
+            # 顺手牵羊卡 - 让对方给你一张技能卡
+            if not target_id:
+                return False, ''
+            target = room.players.get(target_id)
+            if not target or not target.is_alive or not target.skills:
+                return False, '目标玩家没有可给的卡'
+            given = random.choice(target.skills)
+            target.remove_skill(given.get('id', ''))
+            player.skills.append(given)
+            result_msg += '，从' + target.name + '处获得一张【' + given.get('name', '技能卡') + '】'
+
+        elif effect.get('extra_action'):
+            # 二般人卡 - 一轮可行动两次
+            player.status_effects['extra_action'] = 1
+            result_msg += '，本轮可行动两次'
+
+        elif effect.get('upgrade_skill'):
+            # 升级卡 - 升级一次技能(×2)
+            # 找到玩家另一张技能卡进行升级
+            other_skills = [s for s in player.skills if s.get('skill_type') != skill_type_key and s.get('id') != skill_card.get('id')]
+            if other_skills:
+                target_skill = random.choice(other_skills)
+                target_skill_name = target_skill.get('name', '技能卡')
+                # 通过status_effects标记升级
+                player.status_effects['upgrade_target'] = target_skill.get('skill_type') or target_skill.get('id')
+                player.status_effects['upgrade_multiplier'] = 2
+                result_msg += '，升级了【' + target_skill_name + '】效果×2'
+            else:
+                result_msg += '，没有可升级的技能卡'
+
         else:
             return False, ''
 
@@ -764,7 +1050,8 @@ def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
         return False, ''
 
     # 移除技能卡
-    player.skills.remove(skill_card)
+    if skill_card in player.skills:
+        player.skills.remove(skill_card)
 
     # 检查阵亡
     for p in room.players.values():
@@ -1108,7 +1395,8 @@ def _start_next_round(room_id):
         p.repair_active = False
         # 清除单回合状态效果
         for key in ['skip_turn', 'force_attack', 'ignore_defend',
-                     'damage_reduction', 'reflect', 'immune', 'untargetable', 'disguise']:
+                     'damage_reduction', 'reflect', 'immune', 'untargetable', 'disguise',
+                     'invulnerable', 'extra_action']:
             p.status_effects.pop(key, None)
         # 眩晕：支持计数器，递减而非直接清除
         stun = p.status_effects.get('stun')
@@ -1231,8 +1519,8 @@ def _trigger_ai_actions(room_id):
     if room.game_state.phase != GamePhase.ACTION:
         return
 
-    # 只触发尚未提交行动的AI玩家
-    ai_players = [p for p in room.players.values() if p.is_ai and p.is_alive and not p.is_spectator and not p.action]
+    # 只触发尚未提交行动的AI玩家（检查 game_state.actions 而非 p.action）
+    ai_players = [p for p in room.players.values() if p.is_ai and p.is_alive and not p.is_spectator and p.id not in room.game_state.actions]
     print(f'[AI] trigger_ai_actions: room={room_id}, phase={room.game_state.phase.value}, ai_count={len(ai_players)}, all_players={[(p.id, p.is_ai, p.action) for p in room.players.values()]}')
     if not ai_players:
         return

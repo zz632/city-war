@@ -792,7 +792,10 @@ def api_rooms():
         return jsonify({'success': False, 'message': '名字不能为空'}), 400
 
     client_ip = request.remote_addr
-    result = room_manager.create_room(player_name, 'p_' + uuid.uuid4().hex[:12], client_ip)
+    room_password = data.get('password', '')
+    room_max = int(data.get('max_players', 8))
+    result = room_manager.create_room(player_name, 'p_' + uuid.uuid4().hex[:12], client_ip,
+                                       password=room_password, max_players=room_max)
     if result[0] is None:
         return jsonify({'success': False, 'message': result[1]}), 403
 
@@ -816,8 +819,13 @@ def api_join_room(room_id):
         return jsonify({'success': False, 'message': '名字不能为空'}), 400
 
     client_ip = request.remote_addr
-    player = room_manager.join_room(room_id, player_name, 'p_' + uuid.uuid4().hex[:12], client_ip)
+    room_password = data.get('password', '')
+    player = room_manager.join_room(room_id, player_name, 'p_' + uuid.uuid4().hex[:12], client_ip,
+                                     password=room_password)
     if not player:
+        room = room_manager.get_room(room_id)
+        if room and room.password and room_password != room.password:
+            return jsonify({'success': False, 'message': '密码错误', 'need_password': True}), 403
         return jsonify({'success': False, 'message': '房间不存在或已满'}), 400
 
     # 关联登录用户名
@@ -842,6 +850,20 @@ def get_room_status(room_id):
     return jsonify({
         'success': True,
         'room': room.to_dict()
+    })
+
+
+@app.route('/api/room/<room_id>/check', methods=['GET'])
+def check_room_password(room_id):
+    """检查房间是否存在及是否需要密码（加入前调用）"""
+    room = room_manager.get_room(room_id)
+    if not room:
+        return jsonify({'success': False, 'message': '房间不存在'}), 404
+    return jsonify({
+        'success': True,
+        'has_password': bool(room.password),
+        'max_players': room.max_players,
+        'player_count': len(room.players)
     })
 
 
