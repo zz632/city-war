@@ -28,7 +28,8 @@ class RoomManager:
         self.rooms: Dict[str, Room] = {}
         self.players: Dict[str, Player] = {}
     
-    def create_room(self, player_name: str, player_sid: str, client_ip: str = '') -> tuple:
+    def create_room(self, player_name: str, player_sid: str, client_ip: str = '',
+                     password: str = '', max_players: int = 8) -> tuple:
         """创建新房间"""
         # 生成4位纯数字房间号，方便分享
         room_id = str(random.randint(1000, 9999))
@@ -46,7 +47,9 @@ class RoomManager:
             id=room_id,
             name=f"房间-{room_id}",
             host_id=player_sid,
-            players={player_sid: player}
+            players={player_sid: player},
+            max_players=max(2, min(8, max_players)),
+            password=password
         )
         
         self.rooms[room_id] = room
@@ -54,15 +57,20 @@ class RoomManager:
         
         return room_id, player
     
-    def join_room(self, room_id: str, player_name: str, player_sid: str, client_ip: str = '') -> Optional[Player]:
-        """加入房间"""
+    def join_room(self, room_id: str, player_name: str, player_sid: str,
+                  client_ip: str = '', password: str = '') -> Optional[Player]:
+        """加入房间，返回Player或None。密码错误返回None（调用方应区分原因）"""
         room_id = str(room_id).strip()
         if room_id not in self.rooms:
             return None
 
         room = self.rooms[room_id]
 
-        if len(room.players) >= 8:
+        # 检查密码
+        if room.password and password != room.password:
+            return None
+
+        if len(room.players) >= room.max_players:
             return None
 
         # 判断是否需要成为观战者
@@ -312,6 +320,36 @@ class RoomManager:
                 recurring['rounds'] -= 1
                 if recurring['rounds'] <= 0:
                     del player.status_effects['recurring']
+
+            # 回血卡 - 每轮固定回血
+            recurring_heal = player.status_effects.get('recurring_heal')
+            if recurring_heal:
+                player.change_cities(recurring_heal)
+                results['city_changes'][pid] += recurring_heal
+
+            # 撒豆成兵卡 - 延迟回血
+            delay_troops = player.status_effects.get('delay_troops')
+            if delay_troops:
+                delay_troops['rounds_left'] -= 1
+                if delay_troops['rounds_left'] <= 0:
+                    heal = delay_troops['heal']
+                    player.change_cities(heal)
+                    results['city_changes'][pid] += heal
+                    results['messages'].append(player.name + f' 撒豆成兵生效，恢复{heal}城池')
+                    del player.status_effects['delay_troops']
+
+            # 不死图腾后续效果：每轮回血+减伤倒计时
+            totem = player.status_effects.get('immortal_totem')
+            if totem and totem.get('post_save_rounds', 0) > 0:
+                # 触发后才生效（post_save_rounds初始值等于设定值，说明未触发过）
+                if totem.get('triggered'):
+                    post_heal = totem.get('post_save_heal', 0)
+                    if post_heal:
+                        player.change_cities(post_heal)
+                        results['city_changes'][pid] += post_heal
+                    totem['post_save_rounds'] -= 1
+                    if totem['post_save_rounds'] <= 0:
+                        del player.status_effects['immortal_totem']
         
         # 处理打野——50%概率获10*multiplier城池，50%获技能卡
         for pid, action in game_state.actions.items():
@@ -387,13 +425,34 @@ class RoomManager:
                 if is_mutual:
                     damage = max(0, damage - 100)
 
+                # 攻击者伤害加成（永久buff）
+                if attacker.status_effects.get('permanent_damage_bonus'):
+                    damage += attacker.status_effects['permanent_damage_bonus']
+                if attacker.status_effects.get('attack_multiplier'):
+                    damage = int(damage * attacker.status_effects['attack_multiplier'])
+                if attacker.status_effects.get('permanent_attack_bonus'):
+                    damage = int(damage * (1 + attacker.status_effects['permanent_attack_bonus']))
+
                 # 修城方受到的伤害翻倍
                 if target.repair_active:
                     damage = damage * 2
 
-                # 目标伤害减免
+                # 目标伤害减免（百分比）
                 if target.status_effects.get('damage_reduction'):
                     damage = int(damage * (1 - target.status_effects['damage_reduction']))
+
+                # 目标永久减伤（百分比）
+                if target.status_effects.get('permanent_reduction'):
+                    damage = int(damage * (1 - target.status_effects['permanent_reduction']))
+
+                # 目标定值减伤（磐石堡垒卡）
+                if target.status_effects.get('flat_damage_reduction'):
+                    damage = max(0, damage - target.status_effects['flat_damage_reduction'])
+
+                # 不死图腾减伤（触发后3轮内）
+                totem = target.status_effects.get('immortal_totem')
+                if totem and totem.get('triggered') and totem.get('post_save_reduction'):
+                    damage = int(damage * (1 - totem['post_save_reduction']))
 
                 # 目标免疫
                 if target.status_effects.get('immune'):
@@ -445,6 +504,13 @@ class RoomManager:
                     'target': action.get('target_id'),
                     'damage': damage if not (target_action and target_action['action_type'] == 'defend') else 0
                 }
+
+                # 吸血卡：攻击造成伤害后吸取百分比总血量
+                if attacker.status_effects.get('lifesteal_percent') and damage > 0:
+                    lifesteal = int(damage * attacker.status_effects['lifesteal_percent'])
+                    if lifesteal > 0:
+                        attacker.change_cities(lifesteal)
+                        results['city_changes'][pid] += lifesteal
         
         # 处理守城——无被动加成，仅在被攻击时反弹
         for pid, action in game_state.actions.items():
@@ -567,12 +633,52 @@ class RoomManager:
                     results['actions'][pid] = {'type': 'dissolve_alliance', 'partner': partner_id}
                     results['actions'][partner_id] = {'type': 'dissolve_alliance', 'partner': pid}
 
-        # 检查死亡玩家
+        # 收益倍率处理（聚宝盆卡/以逸待劳卡）：对正收益额外加成
+        for pid, player in room.players.items():
+            if not player.is_alive:
+                continue
+            change = results['city_changes'].get(pid, 0)
+            if change > 0:
+                bonus_mult = 1
+                if player.status_effects.get('income_multiplier'):
+                    bonus_mult *= player.status_effects['income_multiplier']
+                if player.status_effects.get('double_gain'):
+                    bonus_mult *= 2
+                if bonus_mult != 1:
+                    bonus = int(change * (bonus_mult - 1))
+                    player.change_cities(bonus)
+                    results['city_changes'][pid] += bonus
+
+        # 检查死亡玩家（含不死图腾被动触发）
         for pid, player in room.players.items():
             if player.is_alive and player.cities < 0:
-                player.is_alive = False
-                player.is_spectator = True
-                results['messages'].append(f"{player.name} 城池耗尽，已阵亡")
+                # 不死图腾被动触发
+                totem = player.status_effects.get('immortal_totem')
+                if totem and not totem.get('triggered'):
+                    heal_amount = totem.get('emergency_heal', 50)
+                    player.cities += heal_amount
+                    totem['triggered'] = True
+                    if player.cities >= 0:
+                        results['messages'].append(f"{player.name} 触发不死图腾，恢复{heal_amount}城池！")
+                    else:
+                        results['messages'].append(f"{player.name} 不死图腾恢复{heal_amount}城池，但仍不足")
+                # 仍然死亡
+                if player.cities < 0:
+                    player.is_alive = False
+                    player.is_spectator = True
+                    results['messages'].append(f"{player.name} 城池耗尽，已阵亡")
+
+        # 伪装卡：将伪装玩家的行动显示为随机行动
+        for pid, player in room.players.items():
+            if player.status_effects.get('disguise') and pid in results.get('actions', {}):
+                fake_actions = ['attack', 'defend', 'jungle', 'repair']
+                fake = random.choice(fake_actions)
+                orig = results['actions'][pid]
+                results['actions'][pid] = {'type': fake, 'disguised': True}
+                if 'target' in orig:
+                    alive_ids = [opid for opid, op in room.players.items() if op.is_alive and opid != pid]
+                    if alive_ids:
+                        results['actions'][pid]['target'] = random.choice(alive_ids)
         
         # 检查游戏结束
         alive_players = [p for p in room.players.values() if p.is_alive]
