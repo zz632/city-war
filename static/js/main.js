@@ -306,7 +306,7 @@ async function createRoom(name) {
 async function joinRoom(name, code) {
     // 先检查房间是否需要密码
     try {
-        const checkRes = await fetch('/api/room/' + code + '/check');
+        const checkRes = await fetch('/api/room/' + code + '/check', { headers: authHeaders() });
         const checkData = await checkRes.json();
         if (!checkData.success) {
             toast(checkData.message || '房间不存在', 'error');
@@ -491,7 +491,7 @@ function initLobby() {
 
 async function fetchLobbyState(roomId) {
     try {
-        const res = await fetch('/api/room/' + roomId + '/status');
+        const res = await fetch('/api/room/' + roomId + '/status', { headers: authHeaders() });
         const data = await res.json();
         if (data.success) {
             renderLobbyPlayers(data.room.players || []);
