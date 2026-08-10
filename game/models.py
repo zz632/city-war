@@ -156,8 +156,8 @@ class Room:
                 self.players[self.host_id].is_host = True
     
     def get_alive_players(self) -> List[Player]:
-        """获取存活玩家"""
-        return [p for p in self.players.values() if p.is_alive]
+        """获取存活玩家（排除观战者）"""
+        return [p for p in self.players.values() if p.is_alive and not p.is_spectator]
     
     def check_game_over(self) -> Optional[str]:
         """检查游戏是否结束，返回获胜者ID"""

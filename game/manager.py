@@ -181,7 +181,7 @@ class RoomManager:
             return False
         
         player = room.players.get(player_sid)
-        if not player or not player.is_alive:
+        if not player or not player.is_alive or player.is_spectator:
             return False
 
         # 检查状态效果
@@ -676,12 +676,12 @@ class RoomManager:
                 orig = results['actions'][pid]
                 results['actions'][pid] = {'type': fake, 'disguised': True}
                 if 'target' in orig:
-                    alive_ids = [opid for opid, op in room.players.items() if op.is_alive and opid != pid]
+                    alive_ids = [opid for opid, op in room.players.items() if op.is_alive and not op.is_spectator and opid != pid]
                     if alive_ids:
                         results['actions'][pid]['target'] = random.choice(alive_ids)
         
         # 检查游戏结束
-        alive_players = [p for p in room.players.values() if p.is_alive]
+        alive_players = [p for p in room.players.values() if p.is_alive and not p.is_spectator]
         if len(alive_players) <= 1:
             game_state.phase = GamePhase.FINISHED
             if alive_players:

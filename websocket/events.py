@@ -446,7 +446,7 @@ def _register():
             return
 
         player = room.players.get(player_id)
-        if not player or not player.is_alive:
+        if not player or not player.is_alive or player.is_spectator:
             _emit('error_msg', {'message': '无法操作'})
             return
 
@@ -482,7 +482,7 @@ def _register():
             }, room=target_sid)
 
         # 检查是否所有存活玩家都已提交
-        alive = [p for p in room.players.values() if p.is_alive]
+        alive = [p for p in room.players.values() if p.is_alive and not p.is_spectator]
         if len(room.game_state.actions) >= len(alive):
             _process_round(room_id)
 
@@ -1132,7 +1132,7 @@ def _process_round(room_id):
     # 只保留最近3轮
     room.game_state.round_history = room.game_state.round_history[-3:]
 
-    alive = [p for p in room.players.values() if p.is_alive]
+    alive = [p for p in room.players.values() if p.is_alive and not p.is_spectator]
     if len(alive) <= 1:
         winner = alive[0] if alive else None
         _emit('round_result', round_result_data, room=room_id)
@@ -1275,7 +1275,7 @@ def _after_duel_end(room_id):
         return
 
     # 检查是否有人因约战死亡
-    alive = [p for p in room.players.values() if p.is_alive]
+    alive = [p for p in room.players.values() if p.is_alive and not p.is_spectator]
     if len(alive) <= 1:
         winner_p = alive[0] if alive else None
         room.game_state.phase = GamePhase.FINISHED
@@ -1303,7 +1303,7 @@ def _start_auction(room_id):
     if not room or not room.game_state:
         return
 
-    alive = [p for p in room.players.values() if p.is_alive]
+    alive = [p for p in room.players.values() if p.is_alive and not p.is_spectator]
     if not alive:
         _start_next_round(room_id)
         return
@@ -1384,7 +1384,7 @@ def _start_next_round(room_id):
     if not room or not room.game_state:
         return
 
-    alive = [p for p in room.players.values() if p.is_alive]
+    alive = [p for p in room.players.values() if p.is_alive and not p.is_spectator]
     if len(alive) <= 1:
         winner = alive[0] if alive else None
         _emit('game_ended', {'winner': winner.to_dict() if winner else None}, room=room_id)
@@ -1764,7 +1764,7 @@ def _do_duel_shot(room_id, player_id, shots):
         }, room=room_id)
 
         # 检查是否有人因约战死亡
-        alive = [p for p in room.players.values() if p.is_alive]
+        alive = [p for p in room.players.values() if p.is_alive and not p.is_spectator]
         if len(alive) <= 1:
             winner_p = alive[0] if alive else None
             room.game_state.phase = GamePhase.FINISHED
