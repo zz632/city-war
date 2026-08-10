@@ -60,16 +60,16 @@
         </div>
 
         <!-- 操作按钮 -->
-        <div class="lobby-footer">
-            <button id="roomSettingsBtn" class="btn btn-secondary" style="width:100%;margin-bottom:8px;display:none">
+        <div class="lobby-footer" style="flex-direction:column">
+            <button id="roomSettingsBtn" class="btn btn-secondary btn-lg" style="width:100%;display:none">
                 <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;vertical-align:-3px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.45l.05.07a1.65 1.65 0 01-1.17 2.35 1.65 1.65 0 00-1.45.33l-.07.05a1.65 1.65 0 01-2.35-1.17 1.65 1.65 0 00-.33-1.45l-.05-.07a1.65 1.65 0 011.17-2.35 1.65 1.65 0 001.45-.33l.07-.05a1.65 1.65 0 012.35 1.17z"/></svg>
                 <span>房间设置</span>
             </button>
-            <button id="startBtn" class="btn btn-green btn-lg" style="flex:1;display:none">
+            <button id="startBtn" class="btn btn-green btn-lg" style="width:100%;display:none">
                 <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                 <span>开始游戏</span>
             </button>
-            <button id="urgeBtn" class="btn btn-secondary btn-lg" style="flex:1;display:none">
+            <button id="urgeBtn" class="btn btn-secondary btn-lg" style="width:100%;display:none">
                 <svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>
                 <span>催促房主开始</span>
             </button>
@@ -78,7 +78,7 @@
 
     <!-- 房间设置弹窗 -->
     <div id="roomSettingsModal" style="display:none;position:fixed;inset:0;z-index:100;background:rgba(0,0,0,0.5);backdrop-filter:blur(4px)">
-        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(420px,90vw);max-height:85vh;overflow-y:auto;background:var(--card-bg);border:1px solid var(--border);border-radius:16px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(420px,90vw);max-height:85vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
                 <h3 style="margin:0;font-size:18px">房间设置</h3>
                 <button onclick="closeRoomSettings()" style="background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer;padding:4px 8px">&times;</button>
@@ -129,6 +129,17 @@
                     <select id="kickPlayerSelect" class="field-input" style="flex:1"></select>
                     <button id="kickPlayerBtn" class="btn btn-outline" style="padding:6px 16px;font-size:13px;color:var(--red);border-color:var(--red)">踢出</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 内置确认弹窗 -->
+    <div id="confirmModal" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(0,0,0,0.5);backdrop-filter:blur(4px)">
+        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(340px,85vw);background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+            <div id="confirmMessage" style="font-size:15px;line-height:1.5;margin-bottom:20px;text-align:center"></div>
+            <div style="display:flex;gap:10px;justify-content:center">
+                <button id="confirmCancel" class="btn btn-secondary" style="flex:1;padding:10px 0">取消</button>
+                <button id="confirmOk" class="btn btn-green" style="flex:1;padding:10px 0">确定</button>
             </div>
         </div>
     </div>

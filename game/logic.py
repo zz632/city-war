@@ -105,7 +105,7 @@ class GameLogic:
     
     def _all_players_acted(self) -> bool:
         """检查是否所有存活玩家都已提交行动"""
-        alive_players = [p for p in self.room.players.values() if p.is_alive]
+        alive_players = [p for p in self.room.players.values() if p.is_alive and not p.is_spectator]
         return all(p.action is not None for p in alive_players)
     
     def _process_hunt(self, player: Player, gesture: str) -> str:
@@ -540,7 +540,7 @@ class GameLogic:
             return
         
         # 计算起拍价
-        alive_players = [p for p in self.room.players.values() if p.is_alive]
+        alive_players = [p for p in self.room.players.values() if p.is_alive and not p.is_spectator]
         if not alive_players:
             self._next_round()
             return
@@ -616,15 +616,15 @@ class GameLogic:
             player.has_repaired = False
         
         # 检查游戏结束
-        alive_players = [p for p in self.room.players.values() if p.is_alive]
+        alive_players = [p for p in self.room.players.values() if p.is_alive and not p.is_spectator]
         if len(alive_players) <= 1:
             self.room.game_state.phase = 'ended'
             if alive_players:
                 self.room.game_state.winner = alive_players[0].id
-    
+
     def check_game_end(self) -> Optional[str]:
         """检查游戏是否结束，返回获胜者ID"""
-        alive_players = [p for p in self.room.players.values() if p.is_alive]
+        alive_players = [p for p in self.room.players.values() if p.is_alive and not p.is_spectator]
         
         if len(alive_players) == 0:
             return 'draw'

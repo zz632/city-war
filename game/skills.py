@@ -473,7 +473,7 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
         # 商路卡 - 从其他玩家各获得5城池
         total_gain = 0
         for pid, p in game_state.players.items():
-            if pid != player_id and p.is_alive:
+            if pid != player_id and p.is_alive and not p.is_spectator:
                 p.cities -= 5
                 total_gain += 5
         player.cities += total_gain
@@ -678,11 +678,11 @@ def apply_skill_effect(game_state: Any, player_id: str, skill_id: str,
         # 万箭齐发卡 - 对其他所有人造成15+3n伤害，获得伤害1/3城池
         base_dmg = skill["effect"].get("aoe_damage", 15)
         per_player = skill["effect"].get("aoe_per_player", 3)
-        n_other = sum(1 for pid, p in game_state.players.items() if pid != player_id and p.is_alive)
+        n_other = sum(1 for pid, p in game_state.players.items() if pid != player_id and p.is_alive and not p.is_spectator)
         total_dmg = base_dmg + per_player * n_other
         total_dealt = 0
         for pid, p in game_state.players.items():
-            if pid != player_id and p.is_alive:
+            if pid != player_id and p.is_alive and not p.is_spectator:
                 p.cities -= total_dmg
                 total_dealt += total_dmg
         player.cities += total_dealt // 3

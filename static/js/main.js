@@ -46,6 +46,29 @@ function toast(msg, type = 'info') {
     setTimeout(() => el.classList.remove('show'), 2500);
 }
 
+// ===== 内置确认弹窗 =====
+function showConfirm(message) {
+    return new Promise(resolve => {
+        const modal = document.getElementById('confirmModal');
+        const msgEl = document.getElementById('confirmMessage');
+        const okBtn = document.getElementById('confirmOk');
+        const cancelBtn = document.getElementById('confirmCancel');
+        if (!modal) { resolve(confirm(message)); return; }
+        msgEl.textContent = message;
+        modal.style.display = '';
+        const cleanup = (val) => {
+            modal.style.display = 'none';
+            okBtn.removeEventListener('click', onOk);
+            cancelBtn.removeEventListener('click', onCancel);
+            resolve(val);
+        };
+        const onOk = () => cleanup(true);
+        const onCancel = () => cleanup(false);
+        okBtn.addEventListener('click', onOk);
+        cancelBtn.addEventListener('click', onCancel);
+    });
+}
+
 // ===== 首页 =====
 function initHome() {
     // 检测是否在线模式
@@ -684,19 +707,19 @@ function openRoomSettings() {
             socket.emit('room_settings', { room_id: myRoomId, player_id: myPlayerId, max_players: max });
         });
 
-        document.getElementById('transferHostBtn')?.addEventListener('click', () => {
+        document.getElementById('transferHostBtn')?.addEventListener('click', async () => {
             const targetId = document.getElementById('transferHostSelect').value;
             if (!targetId) { toast('请选择玩家', 'error'); return; }
-            if (!confirm('确定转让房主？')) return;
+            if (!(await showConfirm('确定转让房主？'))) return;
             socket.emit('transfer_host', { room_id: myRoomId, player_id: myPlayerId, target_id: targetId });
             closeRoomSettings();
         });
 
-        document.getElementById('kickPlayerBtn')?.addEventListener('click', () => {
+        document.getElementById('kickPlayerBtn')?.addEventListener('click', async () => {
             const targetId = document.getElementById('kickPlayerSelect').value;
             if (!targetId) { toast('请选择玩家', 'error'); return; }
             const name = document.getElementById('kickPlayerSelect').selectedOptions[0]?.text || '';
-            if (!confirm('确定踢出 ' + name + '？')) return;
+            if (!(await showConfirm('确定踢出 ' + name + '？'))) return;
             socket.emit('kick_player', { room_id: myRoomId, player_id: myPlayerId, target_id: targetId });
             closeRoomSettings();
         });
