@@ -132,26 +132,31 @@ class RoomManager:
         """开始游戏"""
         if room_id not in self.rooms:
             return False
-        
+
         room = self.rooms[room_id]
-        
+
         if room.host_id != player_sid:
             return False
-        
-        if len(room.players) < 2:
+
+        # 只计算非观战者玩家数
+        non_spectator_count = sum(1 for p in room.players.values() if not p.is_spectator)
+        if non_spectator_count < 2:
             return False
-        
+
         if room.game_state and room.game_state.phase != GamePhase.WAITING:
-            return False
-        
+            # 游戏可能未正确结束（如浏览器关闭），重置为等待状态
+            room.game_state = None
+
         # 初始化游戏状态
         room.game_state = GameState(
             round=1,
             phase=GamePhase.ACTION
         )
-        
-        # 初始化玩家城池数
+
+        # 初始化玩家城池数（观战者保持观战状态）
         for player in room.players.values():
+            if player.is_spectator:
+                continue
             player.cities = 250
             player.is_alive = True
             player.skills = []

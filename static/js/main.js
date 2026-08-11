@@ -281,6 +281,7 @@ async function doGuestLogin() {
             authToken = data.token;
             loggedInDisplayName = data.display_name;
             localStorage.setItem('auth_token', authToken);
+            closeMoreLoginModal();
             showGameSection();
         } else {
             toast(data.message || '登录失败', 'error');
@@ -445,7 +446,12 @@ function initLobby() {
         window.location.href = '/game/' + roomId + '?pid=' + myPlayerId;
     });
 
-    socket.on('error_msg', data => toast(data.message, 'error'));
+    socket.on('error_msg', data => {
+        toast(data.message, 'error');
+        // 恢复开始按钮状态
+        const startBtn = document.getElementById('startBtn');
+        if (startBtn) { startBtn.disabled = false; startBtn.innerHTML = '<svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg><span>开始游戏</span>'; }
+    });
 
     socket.on('ai_api_error', data => showAiApiError(data));
 
@@ -459,6 +465,8 @@ function initLobby() {
     // 开始按钮
     const startBtn = document.getElementById('startBtn');
     if (startBtn) startBtn.addEventListener('click', () => {
+        startBtn.disabled = true;
+        startBtn.textContent = '开始中...';
         socket.emit('start_game', { room_id: roomId, player_id: myPlayerId });
     });
 

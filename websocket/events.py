@@ -100,12 +100,17 @@ def _register():
             _emit('error_msg', {'message': '只有房主可以开始游戏'})
             return
 
-        if len(room.players) < 2:
+        # 只计算非观战者玩家数
+        non_spectator_count = sum(1 for p in room.players.values() if not p.is_spectator)
+        if non_spectator_count < 2:
             _emit('error_msg', {'message': '至少需要2名玩家'})
             return
 
         ok = room_manager.start_game(room_id, player_id)
         if not ok:
+            gs = room.game_state
+            print(f'[START_GAME] failed: room={room_id}, host={room.host_id}, player={player_id}, '
+                  f'players={len(room.players)}, game_state={gs.phase.value if gs else "None"}')
             _emit('error_msg', {'message': '无法开始游戏'})
             return
 
