@@ -748,6 +748,25 @@ function initGame() {
 
     if (!roomId) return;
 
+    // 顶栏房间号
+    const topRoomEl = document.getElementById('topRoomId');
+    if (topRoomEl) topRoomEl.textContent = roomId;
+
+    // 帮助弹窗
+    const helpModal = document.getElementById('helpModal');
+    const helpBtn = document.getElementById('helpBtn');
+    if (helpBtn && helpModal) {
+        helpBtn.addEventListener('click', () => {
+            helpModal.style.display = (helpModal.style.display === 'block') ? 'none' : 'block';
+        });
+        document.getElementById('helpModalClose')?.addEventListener('click', () => {
+            helpModal.style.display = 'none';
+        });
+        helpModal.addEventListener('click', e => {
+            if (e.target === helpModal) helpModal.style.display = 'none';
+        });
+    }
+
     socket = io();
 
     socket.on('connect', () => {

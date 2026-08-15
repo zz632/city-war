@@ -310,7 +310,7 @@ body {
 .lobby-footer { display: flex; gap: 8px; margin-top: 20px; }
 
 .chat-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.chat-messages { flex: 1; overflow-y: auto; padding: 10px 0; }
+.chat-messages { flex: 1; overflow-y: auto; padding: 10px 0; min-height: 180px; max-height: 40vh; }
 .chat-msg { font-size: 14px; margin-bottom: 5px; line-height: 1.4; animation: fadeIn .15s ease; }
 .chat-msg-name { font-weight: 600; color: var(--primary); }
 .chat-msg-text { color: var(--text-secondary); }
@@ -528,6 +528,325 @@ body {
 }
 .settings-btn:hover { background: var(--surface-hover); transform: scale(1.05); }
 .settings-btn svg { width: 18px; height: 18px; stroke: var(--text-secondary); fill: none; stroke-width: 1.6; }
+[data-settings-slot] .settings-btn { position: static; box-shadow: none; flex-shrink: 0; }
+
+/* ===== 设置弹窗 ===== */
+.sp-modal { display:none; position:fixed; inset:0; z-index:600; background:rgba(0,0,0,0.5); backdrop-filter:blur(4px); }
+.sp-modal.open { display:block; }
+.sp-modal-box { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:min(760px, 92vw); height:min(600px, 86vh); background:var(--surface); border:1px solid var(--border); border-radius:16px; box-shadow:0 20px 60px rgba(0,0,0,0.3); display:flex; flex-direction:column; overflow:hidden; }
+.sp-modal-header { display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--border); flex-shrink:0; }
+.sp-modal-title { font-size:17px; font-weight:700; color:var(--text); }
+.sp-modal-close { background:none; border:none; cursor:pointer; padding:6px; border-radius:var(--radius-sm); color:var(--text-secondary); display:flex; align-items:center; }
+.sp-modal-close:hover { background:var(--surface-active); color:var(--text); }
+.sp-modal-close svg { width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:2; }
+.sp-modal .sp-main { flex:1; min-height:0; }
+
+/* 主体 */
+.sp-main {
+    display: flex;
+}
+
+/* ===== 宽屏布局 ===== */
+.sp-main.sp-wide {
+    flex-direction: row;
+}
+
+/* 侧边栏 */
+.sp-sidebar {
+    width: 220px;
+    min-width: 220px;
+    padding: 16px 12px;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    overflow-y: auto;
+}
+.sp-sidebar-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text);
+    transition: all var(--transition-fast);
+    margin-bottom: 2px;
+}
+.sp-sidebar-item:hover {
+    background: var(--surface-hover);
+}
+.sp-sidebar-item.active {
+    background: var(--surface-active);
+    font-weight: 600;
+}
+.sp-sidebar-icon {
+    width: 20px;
+    height: 20px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 1.6;
+    flex-shrink: 0;
+}
+
+/* 内容区（弹窗内滚动） */
+.sp-content {
+    flex: 1;
+    padding: 24px 28px;
+    overflow-y: auto;
+    max-width: 560px;
+}
+
+/* ===== 窄屏布局 ===== */
+.sp-main.sp-narrow {
+    flex-direction: column;
+}
+
+/* 窄屏列表 */
+.sp-narrow-list {
+    padding: 8px 16px;
+}
+.sp-narrow-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    margin-bottom: 2px;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+.sp-narrow-item:first-child {
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+.sp-narrow-item:last-child {
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+    margin-bottom: 0;
+}
+.sp-narrow-item:only-child {
+    border-radius: var(--radius-sm);
+}
+.sp-narrow-item:hover {
+    background: var(--surface-hover);
+}
+.sp-narrow-icon {
+    width: 22px;
+    height: 22px;
+    stroke: var(--text-secondary);
+    fill: none;
+    stroke-width: 1.6;
+    flex-shrink: 0;
+}
+.sp-narrow-label {
+    flex: 1;
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--text);
+}
+.sp-narrow-chevron {
+    width: 16px;
+    height: 16px;
+    stroke: var(--text-tertiary);
+    fill: none;
+    stroke-width: 2;
+    flex-shrink: 0;
+}
+
+/* 窄屏 detail 返回按钮 */
+.sp-narrow-back {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border: none;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text);
+    flex-shrink: 0;
+}
+.sp-narrow-back:hover { background: var(--surface-hover); }
+.sp-narrow-back svg {
+    width: 18px;
+    height: 18px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
+}
+
+/* ===== Section 内容 ===== */
+.sp-section-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+.sp-section-icon {
+    width: 24px;
+    height: 24px;
+    stroke: var(--primary);
+    fill: none;
+    stroke-width: 1.6;
+}
+.sp-section-header span {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text);
+}
+
+/* 账号信息 */
+.sp-profile-info {
+    margin-bottom: 16px;
+}
+.sp-profile-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    background: var(--surface-hover);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    margin-bottom: 2px;
+    font-size: 15px;
+}
+.sp-profile-row:first-child {
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+.sp-profile-row:last-child {
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+    margin-bottom: 0;
+}
+.sp-profile-row:only-child {
+    border-radius: var(--radius-sm);
+}
+.sp-profile-label {
+    color: var(--text-secondary);
+}
+
+/* 本地模式提示 */
+.sp-local-msg {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-secondary);
+}
+.sp-local-msg p {
+    margin-top: 12px;
+    font-size: 16px;
+    font-weight: 500;
+}
+
+/* 保存按钮 */
+.sp-save-btn {
+    margin-top: 20px;
+}
+
+/* 外观设置组 */
+.sp-settings-group {
+    margin-bottom: 20px;
+}
+.sp-settings-group-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    margin-bottom: 8px;
+}
+
+/* 预设颜色行 */
+.sp-preset-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 12px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+
+/* RGB 区域 */
+.sp-rgb-area {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+.sp-rgb-preview-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.sp-color-preview {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    border: 1px solid var(--border-strong);
+    flex-shrink: 0;
+}
+.sp-color-hex {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+.sp-slider-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.sp-slider-label {
+    font-size: 12px;
+    font-weight: 700;
+    width: 14px;
+    text-align: center;
+    flex-shrink: 0;
+}
+.sp-slider-row .ui-slider {
+    flex: 1;
+}
+.sp-slider-val {
+    font-size: 12px;
+    color: var(--text-secondary);
+    min-width: 28px;
+    text-align: right;
+    flex-shrink: 0;
+}
+
+/* 背景图片行 */
+.sp-bg-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+
+/* ===== 窄屏内容区 ===== */
+.sp-narrow .sp-content {
+    padding: 20px 16px;
+    max-width: none;
+}
+
+/* ===== 响应式 ===== */
+@media (max-width: 767px) {
+    .sp-sidebar {
+        display: none;
+    }
+    .sp-content {
+        max-width: none;
+    }
+}
 
 .color-dot {
     width: 28px; height: 28px; border-radius: 50%;
@@ -563,3 +882,26 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,.2); }
+
+/* ===== game 顶栏 & 帮助 & 聊天 ===== */
+.game-topbar { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
+.topbar-icon-btn { width:38px; height:38px; border-radius:50%; border:1px solid var(--border); background:var(--surface); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all var(--transition-fast); box-shadow:var(--shadow-sm); flex-shrink:0; }
+.topbar-icon-btn:hover { background:var(--surface-hover); transform:scale(1.05); }
+.topbar-icon-btn svg { width:18px; height:18px; stroke:var(--text-secondary); fill:none; stroke-width:1.6; }
+.game-topbar-room { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; font-weight:700; color:var(--primary); font-size:15px; letter-spacing:.5px; min-width:0; }
+.game-topbar-room .room-label { font-size:12px; font-weight:500; color:var(--text-tertiary); }
+.game-topbar-room #topRoomId { font-size:16px; font-variant-numeric:tabular-nums; }
+[data-settings-slot] { display:flex; }
+[data-settings-slot] .settings-btn { position:static; top:auto; right:auto; box-shadow:none; }
+[data-settings-slot] .settings-btn svg { stroke:var(--text-secondary); }
+.help-content { padding:16px 20px 20px; color:var(--text); font-size:14px; line-height:1.7; }
+.help-content h4 { font-size:15px; font-weight:700; color:var(--text); margin:16px 0 6px; display:flex; align-items:center; gap:6px; }
+.help-content h4:first-child { margin-top:0; }
+.help-content p { color:var(--text-secondary); margin-bottom:6px; }
+.help-content ul { margin:0 0 6px 0; padding-left:18px; color:var(--text-secondary); }
+.help-content li { margin-bottom:3px; }
+.help-content strong { color:var(--text); font-weight:600; }
+.chat-send-btn { padding:8px 12px !important; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.chat-send-btn svg { width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:2; }
+#chatArea { flex:1; }
+@media (max-width: 700px) { #chatArea { flex:none; } }

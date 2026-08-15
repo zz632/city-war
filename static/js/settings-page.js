@@ -29,7 +29,10 @@
             narrowView = 'list';
             renderNarrowList();
         } else {
-            window.history.back();
+            // 关闭弹窗
+            var modal = document.getElementById('spModal');
+            if (modal) modal.classList.remove('open');
+            if (window._closeSettingsModal) window._closeSettingsModal();
         }
     }
 
@@ -511,7 +514,12 @@
 
     function renderNarrowDetail() {
         var main = document.getElementById('spMain');
-        main.innerHTML = '<div class="sp-content" id="spContent"></div>';
+        main.innerHTML =
+            '<button class="sp-narrow-back" id="spNarrowBack" title="返回">' +
+                '<svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg><span>设置</span>' +
+            '</button>' +
+            '<div class="sp-content" id="spContent"></div>';
+        document.getElementById('spNarrowBack').onclick = goBack;
         if (currentSection === 'account') {
             renderAccountSection(document.getElementById('spContent'));
         } else if (currentSection === 'appearance') {
@@ -535,26 +543,31 @@
         }
     }
 
-    // ===== 初始化 =====
-    function init() {
-        // 返回按钮
-        document.getElementById('spBack').onclick = goBack;
+    // ===== 弹窗模式初始化 =====
+    var inited = false;
+    var resizeBound = false;
 
-        // 应用主题
-        settings = ui.load();
-        ui.applySettings(settings);
-
-        // 渲染布局
-        renderLayout();
-
-        // 监听窗口大小变化
+    function bindResizeOnce() {
+        if (resizeBound) return;
+        resizeBound = true;
         window.addEventListener('resize', function () {
+            var modal = document.getElementById('spModal');
+            if (!modal || !modal.classList.contains('open')) return;
             var newNarrow = window.innerWidth < 768;
             if (newNarrow !== isNarrow) {
                 isNarrow = newNarrow;
                 renderLayout();
             }
         });
+    }
+
+    function init() {
+        if (inited) return;
+        inited = true;
+        // 返回按钮 = 弹窗关闭按钮
+        var closeBtn = document.getElementById('spModalClose');
+        if (closeBtn) closeBtn.onclick = goBack;
+        bindResizeOnce();
     }
 
     function renderLayout() {
@@ -567,9 +580,20 @@
         }
     }
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
-    }
+    // ===== 对外暴露（由 settings.js 的弹窗逻辑调用） =====
+    window._settingsPage = {
+        open: function () {
+            currentSection = 'account';
+            narrowView = 'list';
+            isNarrow = window.innerWidth < 768;
+            init();
+            renderLayout();
+            var modal = document.getElementById('spModal');
+            if (modal) modal.classList.add('open');
+        },
+        close: function () {
+            var modal = document.getElementById('spModal');
+            if (modal) modal.classList.remove('open');
+        }
+    };
 })();

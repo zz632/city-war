@@ -258,6 +258,85 @@
         rgbToHex: rgbToHex
     };
 
+    /* 密码显示/隐藏切换（全局，供设置弹窗使用） */
+    window.togglePw = function (inputId, btn) {
+        var input = document.getElementById(inputId);
+        if (!input) return;
+        if (input.type === 'password') {
+            input.type = 'text';
+            btn.classList.add('showing');
+        } else {
+            input.type = 'password';
+            btn.classList.remove('showing');
+        }
+    };
+
+    /* ===== 设置弹窗 ===== */
+    var modalInjected = false;
+    var pageScriptRequested = false;
+
+    function injectSettingsModal() {
+        if (modalInjected) return;
+        modalInjected = true;
+        var modal = document.createElement('div');
+        modal.className = 'sp-modal';
+        modal.id = 'spModal';
+        modal.innerHTML =
+            '<div class="sp-modal-box">' +
+                '<div class="sp-modal-header">' +
+                    '<span class="sp-modal-title">设置</span>' +
+                    '<button class="sp-modal-close" id="spModalClose" title="关闭"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>' +
+                '</div>' +
+                '<div class="sp-main" id="spMain"></div>' +
+            '</div>';
+        document.body.appendChild(modal);
+
+        document.getElementById('spModalClose').onclick = function () { closeSettingsModal(); };
+        modal.addEventListener('click', function (e) {
+            if (e.target === modal) closeSettingsModal();
+        });
+        // Esc 关闭（一次性绑定）
+        document.addEventListener('keydown', function (e) {
+            if (e.key !== 'Escape') return;
+            var m = document.getElementById('spModal');
+            if (m && m.classList.contains('open')) closeSettingsModal();
+        });
+    }
+
+    function ensureSettingsPage(onReady) {
+        if (window._settingsPage) { onReady(); return; }
+        if (!pageScriptRequested) {
+            pageScriptRequested = true;
+            var s = document.createElement('script');
+            s.src = '/static/js/settings-page.js?t=' + Date.now();
+            document.head.appendChild(s);
+        }
+        // 脚本加载后即挂载 _settingsPage，短暂轮询兜底
+        var tries = 0;
+        (function wait() {
+            if (window._settingsPage) { onReady(); return; }
+            tries++;
+            if (tries > 20) return; // 放弃
+            setTimeout(wait, 50);
+        })();
+    }
+
+    function openSettingsModal() {
+        injectSettingsModal();
+        ensureSettingsPage(function () {
+            window._settingsPage.open();
+        });
+    }
+
+    function closeSettingsModal() {
+        var modal = document.getElementById('spModal');
+        if (modal) modal.classList.remove('open');
+        if (window._settingsPage) window._settingsPage.close();
+    }
+
+    window.openSettingsModal = openSettingsModal;
+    window._closeSettingsModal = closeSettingsModal;
+
     function addSettingsButton() {
         if (document.getElementById('settingsBtn')) return;
         var btn = document.createElement('button');
@@ -265,8 +344,11 @@
         btn.className = 'settings-btn';
         btn.title = '设置';
         btn.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
-        btn.onclick = function() { window.location.href = '/settings'; };
-        document.body.appendChild(btn);
+        btn.onclick = function() { openSettingsModal(); };
+        // 若页面提供顶栏插槽（如 game 页），插入其中；否则保持 fixed 悬浮
+        var slot = document.querySelector('[data-settings-slot]');
+        if (slot) slot.appendChild(btn);
+        else document.body.appendChild(btn);
     }
 
     function init() {

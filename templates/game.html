@@ -4,10 +4,19 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>游戏 - 城池战争</title>
-    <link rel="stylesheet" href="/static/css/main.css?v=15">
+    <link rel="stylesheet" href="/static/css/main.css?v=16">
 </head>
 <body data-page="game">
     <div class="game-wrap" id="gameRoomId" data-roomid="{{ room_id }}">
+        <!-- 顶栏：帮助 / 房间号 / 设置 -->
+        <div class="game-topbar">
+            <button id="helpBtn" class="topbar-icon-btn" title="帮助">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            </button>
+            <div class="game-topbar-room" title="房间号"><span class="room-label">房间</span><span id="topRoomId"></span></div>
+            <div data-settings-slot></div>
+        </div>
+
         <!-- 顶部状态 -->
         <div class="game-top">
             <div class="stat-box">
@@ -152,21 +161,65 @@
                 </div>
 
                 <!-- 聊天 -->
-                <div class="card" style="display:flex;flex-direction:column">
+                <div class="card" id="chatArea" style="display:flex;flex-direction:column">
                     <div class="section-title">聊天</div>
-                    <div class="chat-messages" id="chatMessages" style="max-height:300px;overflow-y:auto"></div>
+                    <div class="chat-messages" id="chatMessages"></div>
                     <div class="chat-bar">
                         <input type="text" id="chatInput" class="field-input" placeholder="消息..." autocomplete="off">
-                        <button id="chatSend" class="btn btn-primary">发</button>
+                        <button id="chatSend" class="btn btn-primary chat-send-btn" title="发送" aria-label="发送">
+                            <svg viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+                        </button>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
+    <!-- 帮助弹窗 -->
+    <div id="helpModal" style="display:none;position:fixed;inset:0;z-index:150;background:rgba(0,0,0,0.5);backdrop-filter:blur(4px)">
+        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(520px,92vw);max-height:85vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface)">
+                <span style="font-size:17px;font-weight:700;color:var(--text)">怎么玩</span>
+                <button id="helpModalClose" style="background:none;border:none;cursor:pointer;padding:6px;border-radius:8px;color:var(--text-secondary);display:flex" title="关闭">
+                    <svg viewBox="0 0 24 24" style="width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="help-content">
+                <h4>核心目标</h4>
+                <p>每人起始 <strong>250</strong> 城池，城池归零即淘汰，坚持到最后即获胜。</p>
+
+                <h4>每轮行动（选一个）</h4>
+                <ul>
+                    <li><strong>攻城</strong>：选择目标，自己 +25×倍率，目标 −25×倍率。</li>
+                    <li><strong>守城</strong>：反弹伤害，攻击你的人 −20×倍率，自己 +20×倍率。</li>
+                    <li><strong>打野</strong>：50% 概率 +10×倍率城池，50% 概率获得技能卡。</li>
+                    <li><strong>约战</strong>：与对手轮盘对决，赌注下限 15×倍率；转轮共 10 发、前 3 发为空包弹；拒绝约战需交 50% 赌注作为贡奉。</li>
+                </ul>
+
+                <h4>第 3 轮解锁</h4>
+                <ul>
+                    <li><strong>修城</strong>：+30×倍率城池。</li>
+                    <li><strong>结盟</strong>：联盟人数 ≤ 总存活人数一半；盟友间互相不受伤；奖励和伤害由盟友均分。</li>
+                </ul>
+
+                <h4>拍卖会</h4>
+                <p>第 <strong>10</strong> 轮开始，每 <strong>5</strong> 轮举办一次，竞拍技能卡。</p>
+
+                <h4>数值翻倍</h4>
+                <p>第 <strong>8 / 16 / 24</strong> 轮起，所有数值分别 <strong>×2 / ×4 / ×8</strong>。</p>
+
+                <h4>技能卡</h4>
+                <p>共 <strong>40</strong> 种，分为<strong>攻击 / 防御 / 资源 / 特殊</strong>四类。死亡后技能卡不再生效（全场影响类除外）。</p>
+
+                <h4>限制</h4>
+                <p>同一种操作连续执行不能超过 <strong>5</strong> 次。</p>
+            </div>
+        </div>
+    </div>
+
     <div id="toast" class="toast"></div>
     <script src="/static/js/socket.io.min.js"></script>
-    <script src="/static/js/settings.js?v=16"></script>
-    <script src="/static/js/main.js?v=9"></script>
+    <script src="/static/js/settings.js?v=17"></script>
+    <script src="/static/js/main.js?v=10"></script>
 </body>
 </html>
