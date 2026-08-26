@@ -86,6 +86,10 @@
                             <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="1"/></svg>
                             约战
                         </button>
+                        <button class="act-btn" data-action="skip">
+                            <svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                            跳过
+                        </button>
                     </div>
                     <!-- 后期操作（默认隐藏） -->
                     <div id="lateActions" style="display:none;margin-top:8px">
@@ -103,6 +107,17 @@
                     <!-- 猜拳已移除：打野现在为50%概率自动判定 -->
                     <!-- 提示/已提交状态 -->
                     <div id="actionHint" style="display:none;margin-top:10px;text-align:center;font-size:13px;color:var(--text-dim);padding:8px;background:var(--bg-input);border-radius:6px"></div>
+                </div>
+
+                <!-- 濒死抉择面板（默认隐藏，仅濒死玩家可见） -->
+                <div class="action-panel" style="margin-top:16px;display:none;border-color:#ef4444" id="deathChoicePanel">
+                    <div class="section-title" style="margin-bottom:10px;color:#ef4444">濒死抉择</div>
+                    <div id="deathChoiceInfo" style="text-align:center;font-size:15px;line-height:1.8;color:var(--text-dim);margin-bottom:12px"></div>
+                    <div style="display:flex;gap:8px;justify-content:center">
+                        <button class="btn btn-primary" style="padding:8px 20px" onclick="submitDeathChoice(true)">使用不死图腾</button>
+                        <button class="btn btn-danger" style="padding:8px 20px" onclick="submitDeathChoice(false)">放弃</button>
+                    </div>
+                    <div id="deathChoiceTimer" style="text-align:center;font-size:13px;color:var(--red);margin-top:10px"></div>
                 </div>
 
                 <!-- 约战面板（默认隐藏） -->
@@ -194,12 +209,13 @@
                     <li><strong>守城</strong>：反弹伤害，攻击你的人 −20×倍率，自己 +20×倍率。</li>
                     <li><strong>打野</strong>：50% 概率 +10×倍率城池，50% 概率获得技能卡。</li>
                     <li><strong>约战</strong>：与对手轮盘对决，赌注下限 15×倍率；转轮共 10 发、前 3 发为空包弹；拒绝约战需交 50% 赌注作为贡奉。</li>
+                    <li><strong>跳过</strong>：本轮不行动，可用来打断连续操作计数或解除行动限制冲突。</li>
                 </ul>
 
                 <h4>第 3 轮解锁</h4>
                 <ul>
                     <li><strong>修城</strong>：+30×倍率城池。</li>
-                    <li><strong>结盟</strong>：联盟人数 ≤ 总存活人数一半；盟友间互相不受伤；奖励和伤害由盟友均分。</li>
+                    <li><strong>结盟</strong>：场上仅剩 2 人时禁止结盟；盟友间互相不受伤；奖励和伤害由盟友均分。</li>
                 </ul>
 
                 <h4>拍卖会</h4>
@@ -209,10 +225,10 @@
                 <p>第 <strong>8 / 16 / 24</strong> 轮起，所有数值分别 <strong>×2 / ×4 / ×8</strong>。</p>
 
                 <h4>技能卡</h4>
-                <p>共 <strong>40</strong> 种，分为<strong>攻击 / 防御 / 资源 / 特殊</strong>四类。死亡后技能卡不再生效（全场影响类除外）。</p>
+                <p>共 <strong>39</strong> 种，分为<strong>攻击 / 防御 / 资源 / 特殊</strong>四类。死亡后技能卡不再生效（全场影响类除外）。</p>
 
                 <h4>限制</h4>
-                <p>同一种操作连续执行不能超过 <strong>5</strong> 次。</p>
+                <p>同一种操作连续执行不能超过 <strong>5</strong> 次。持不死图腾时濒死会自动询问是否使用，可恢复大量城池继续战斗。</p>
             </div>
         </div>
     </div>
@@ -220,6 +236,6 @@
     <div id="toast" class="toast"></div>
     <script src="/static/js/socket.io.min.js"></script>
     <script src="/static/js/settings.js?v=17"></script>
-    <script src="/static/js/main.js?v=10"></script>
+    <script src="/static/js/main.js?v=11"></script>
 </body>
 </html>

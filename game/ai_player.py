@@ -25,6 +25,7 @@ GAME_RULES = """你是"城池战争"游戏的AI玩家。
 - alliance + target_id(第3轮起): 结盟，联盟人数≤总存活人数1/2，联盟期间奖励/伤害共享均分，联盟内不受伤害
 - dissolve_alliance: 解除已有联盟
 - duel + target_id + bet: 约战(轮盘赌)，赌注最小15最大min(双方)×60%，10发转轮1弹(前三枪空包)，可拒绝(交50%赌注贡奉)
+- skip: 跳过本轮（当某种行动连续5次达到上限无法再选时可选）
 
 ### 数值翻倍
 第8轮后所有数值翻倍(×2)，第16轮再翻倍(×4)，第24轮第三次翻倍(×8)。攻城/守城/打野/修城/约战赌注下限等均翻倍，百分比和特殊效果不翻倍。
@@ -33,7 +34,7 @@ GAME_RULES = """你是"城池战争"游戏的AI玩家。
 攻击类: 火攻(30伤), 奇袭(20伤无视守城), 连弩(15伤×2), 破城(50伤自损10), 毒计(眩晕1轮), +5伤(每轮+5伤), 呆若木鸡(对方无法行动), 万箭齐发(对其他人15+3n伤), 猛攻(攻击×3), 吸血(吸取5%血), 加伤(攻击永久+25%)
 防御类: 铁壁(伤害减半), 空城(反弹20), 援军(+25), 诈降(免疫+反弹15), 迁都(+15+不可选), 无懈可击(免除有害技能), 不死图腾(血<0时+50+3局减伤20%), 磐石堡垒(减伤10), 退退退(免疫+反弹50), 回血(每轮+5), 主角光环(永久减伤20%)
 资源类: 屯田(3回合每回合+10), 商路(每人掠夺5), 征税(+20%), 募兵(+20下回合必须攻城), 丰收(+30跳过下回合), 撒豆成兵(-20城3轮后+80), 聚宝盆(收益永久×1.25), 等价交换(-75城获2卡), 以逸待劳(收益×2)
-特殊类: 瞒天过海(-30城偷1卡), 二般人(行动两次), 升级(技能×2), 顺手牵羊(要1卡), 侦查(查看目标), 伪装(隐藏行动), 急救(城<0时+20), 逆转(交换城池差≤100+3轮不攻), 离间(解散所有联盟+3轮不能联盟)
+特殊类: 瞒天过海(-30城偷1卡), 二般人(行动两次), 升级(技能×2), 顺手牵羊(要1卡), 侦查(查看目标), 急救(城<0时+20), 逆转(交换城池差≤100+3轮不攻), 离间(解散所有联盟+3轮不能联盟)
 
 ### 其他规则
 - 同种操作不可连续超过5次
@@ -42,7 +43,7 @@ GAME_RULES = """你是"城池战争"游戏的AI玩家。
 
 ## 返回格式
 你必须返回JSON(不要任何其他文字)：
-{"action": "attack|defend|jungle|repair|alliance|dissolve_alliance|duel", "target_id": "player_id或null", "bet": 数字或0, "use_skill": true/false, "skill_name": "技能卡名称或null", "skill_target_id": "player_id或null"}
+{"action": "attack|defend|jungle|repair|alliance|dissolve_alliance|duel|skip", "target_id": "player_id或null", "bet": 数字或0, "use_skill": true/false, "skill_name": "技能卡名称或null", "skill_target_id": "player_id或null"}
 
 如果use_skill为true，你必须通过skill_name指定要使用哪张技能卡（必须是你持有的卡）。需要目标的技能卡还需指定skill_target_id。
 """
@@ -90,6 +91,7 @@ def build_ai_prompt(room, player_id: str) -> str:
         available.extend(['repair', 'alliance', 'duel'])
     if player.alliance_with:
         available.append('dissolve_alliance')
+    available.append('skip')
 
     situation += f'\n你可选的行动: {", ".join(available)} (当前数值倍率: ×{multiplier})\n'
 
@@ -292,7 +294,7 @@ def ai_decide(room, player_id: str, config: Dict[str, str]) -> Dict[str, Any]:
 
     if result and isinstance(result, dict) and 'action' in result:
         # 验证基本格式
-        valid_actions = ['attack', 'defend', 'jungle', 'repair', 'alliance', 'dissolve_alliance', 'duel']
+        valid_actions = ['attack', 'defend', 'jungle', 'repair', 'alliance', 'dissolve_alliance', 'duel', 'skip']
         if result['action'] in valid_actions:
             return result
 

@@ -232,22 +232,13 @@ class RoomManager:
             if action_type == 'attack' and player.alliance_with == target_id:
                 return False
 
-        # 结盟校验：联盟人数≤总存活人数1/2
+        # 结盟校验：双方均未结盟；场上仅剩2人时禁止结盟（避免游戏无法分出胜负）
         if action_type == 'alliance':
             # 离间卡效果：不能联盟
             if player.status_effects.get('no_alliance'):
                 return False
             alive_count = sum(1 for p in room.players.values() if p.is_alive and not p.is_spectator)
-            # 计算已有联盟人数（包括当前发起者和目标）
-            alliance_count = 0
-            if player.alliance_with:
-                alliance_count += 2
-            if target_id and room.players.get(target_id) and room.players[target_id].alliance_with:
-                alliance_count += 2
-            # 如果双方都没有联盟，新联盟将有2人
-            if not player.alliance_with and not (target_id and room.players.get(target_id) and room.players[target_id].alliance_with):
-                alliance_count = 2
-            if alliance_count > int(alive_count / 2):
+            if alive_count <= 2:
                 return False
             if player.alliance_with:
                 return False
@@ -270,9 +261,8 @@ class RoomManager:
                 if bet < 15 * multiplier:
                     return False
         
-        # 记录行动历史
-        if action_type != 'skip':
-            player.action_history.append(action_type)
+        # 记录行动历史（跳过也记录，用于打断同种操作的连续计数）
+        player.action_history = (player.action_history + [action_type])[-10:]
 
         # 创建行动
         action = {
@@ -427,14 +417,14 @@ class RoomManager:
 
                 # 计算伤害：固定25 * multiplier
                 damage = 25 * multiplier
-                if is_mutual:
-                    damage = max(0, damage - 100)
 
                 # 攻击者伤害加成（永久buff）
                 if attacker.status_effects.get('permanent_damage_bonus'):
                     damage += attacker.status_effects['permanent_damage_bonus']
-                if attacker.status_effects.get('attack_multiplier'):
-                    damage = int(damage * attacker.status_effects['attack_multiplier'])
+                # 猛攻卡：下一次攻城伤害×N（单次生效）
+                next_atk_mult = attacker.status_effects.get('next_attack_multiplier')
+                if next_atk_mult:
+                    damage = int(damage * next_atk_mult)
                 if attacker.status_effects.get('permanent_attack_bonus'):
                     damage = int(damage * (1 + attacker.status_effects['permanent_attack_bonus']))
 
@@ -458,6 +448,11 @@ class RoomManager:
                 totem = target.status_effects.get('immortal_totem')
                 if totem and totem.get('triggered') and totem.get('post_save_reduction'):
                     damage = int(damage * (1 - totem['post_save_reduction']))
+
+                # 双方互攻：伤害-100（最低为0），在所有加成计算之后统一扣除，
+                # 保证双方同时进攻时判定对称
+                if is_mutual:
+                    damage = max(0, damage - 100)
 
                 # 目标免疫
                 if target.status_effects.get('immune'):
@@ -509,6 +504,10 @@ class RoomManager:
                     'target': action.get('target_id'),
                     'damage': damage if not (target_action and target_action['action_type'] == 'defend') else 0
                 }
+
+                # 猛攻卡单次加成已生效，消耗之
+                if next_atk_mult:
+                    attacker.status_effects.pop('next_attack_multiplier', None)
 
                 # 吸血卡：攻击造成伤害后吸取百分比总血量
                 if attacker.status_effects.get('lifesteal_percent') and damage > 0:
@@ -654,37 +653,18 @@ class RoomManager:
                     player.change_cities(bonus)
                     results['city_changes'][pid] += bonus
 
-        # 检查死亡玩家（含不死图腾被动触发）
+        # 检查死亡玩家（持有不死图腾卡的玩家暂不死亡，由事件层发起濒死抉择）
         for pid, player in room.players.items():
-            if player.is_alive and player.cities < 0:
-                # 不死图腾被动触发
-                totem = player.status_effects.get('immortal_totem')
-                if totem and not totem.get('triggered'):
-                    heal_amount = totem.get('emergency_heal', 50)
-                    player.cities += heal_amount
-                    totem['triggered'] = True
-                    if player.cities >= 0:
-                        results['messages'].append(f"{player.name} 触发不死图腾，恢复{heal_amount}城池！")
-                    else:
-                        results['messages'].append(f"{player.name} 不死图腾恢复{heal_amount}城池，但仍不足")
-                # 仍然死亡
-                if player.cities < 0:
+            if player.is_alive and not player.is_spectator and player.cities < 0:
+                has_totem = any(isinstance(s, dict) and s.get('skill_type') == 'immortal_totem'
+                                for s in player.skills)
+                if has_totem:
+                    results['messages'].append(f"{player.name} 濒死，正在决定是否使用不死图腾...")
+                else:
                     player.is_alive = False
                     player.is_spectator = True
                     results['messages'].append(f"{player.name} 城池耗尽，已阵亡")
 
-        # 伪装卡：将伪装玩家的行动显示为随机行动
-        for pid, player in room.players.items():
-            if player.status_effects.get('disguise') and pid in results.get('actions', {}):
-                fake_actions = ['attack', 'defend', 'jungle', 'repair']
-                fake = random.choice(fake_actions)
-                orig = results['actions'][pid]
-                results['actions'][pid] = {'type': fake, 'disguised': True}
-                if 'target' in orig:
-                    alive_ids = [opid for opid, op in room.players.items() if op.is_alive and not op.is_spectator and opid != pid]
-                    if alive_ids:
-                        results['actions'][pid]['target'] = random.choice(alive_ids)
-        
         # 检查游戏结束
         alive_players = [p for p in room.players.values() if p.is_alive and not p.is_spectator]
         if len(alive_players) <= 1:

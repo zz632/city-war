@@ -552,6 +552,7 @@ def _register():
         player_id = data.get('player_id', '')
         skill_id = data.get('skill_id', '')
         target_id = data.get('target_id')
+        upgrade_target = data.get('upgrade_target')
 
         room = room_manager.get_room(room_id)
         if not room or not room.game_state:
@@ -567,9 +568,10 @@ def _register():
             _emit('error_msg', {'message': '无法使用技能卡'})
             return
 
-        success, result_msg = _apply_skill_card(room_id, player_id, skill_id, target_id)
+        success, result_msg = _apply_skill_card(room_id, player_id, skill_id, target_id,
+                                                upgrade_target=upgrade_target)
         if not success:
-            _emit('error_msg', {'message': '技能卡使用失败'})
+            _emit('error_msg', {'message': result_msg or '技能卡使用失败'})
 
     @socketio.on('duel_shot')
     def on_duel_shot(data):
@@ -623,6 +625,23 @@ def _register():
             return
         _reject_duel(room_id)
 
+    @socketio.on('death_choice')
+    def on_death_choice(data):
+        """玩家濒死时决定是否使用不死图腾"""
+        room_id = str(data.get('room_id', '')).strip()
+        player_id = data.get('player_id', '')
+        use = bool(data.get('use'))
+
+        room = room_manager.get_room(room_id)
+        if not room or not room.game_state:
+            return
+
+        pending = getattr(room.game_state, 'pending_totem', [])
+        if player_id not in pending:
+            return
+
+        _resolve_totem_choice(room_id, player_id, use)
+
     @socketio.on('ready_next_round')
     def on_ready_next_round(data):
         """玩家点击继续行动后通知服务器"""
@@ -638,6 +657,12 @@ def _register():
             return
 
         gs = room.game_state
+
+        # 有濒死抉择未完成时，暂不允许进入下一轮
+        if getattr(gs, 'pending_totem', None):
+            _emit('error_msg', {'message': '有玩家正在做濒死抉择，请稍候'}, room=room_id)
+            return
+
         if not hasattr(gs, 'ready_players'):
             gs.ready_players = set()
         gs.ready_players.add(player_id)
@@ -662,15 +687,15 @@ def _register():
 _SKILL_NEEDS_TARGET = {'attack', 'special'}
 # 攻击类/特殊类中不需要目标的卡ID
 _SKILL_NO_TARGET_IDS = {
-    'disguise', 'first_aid',          # 原有
-    'plus_damage', 'fierce_attack',   # 攻击类自身buff
-    'lifesteal', 'damage_boost',      # 攻击类自身buff
-    'arrow_rain',                     # 攻击类AOE，无需指定目标
-    'double_action', 'upgrade',       # 特殊类自身buff
+    'first_aid',                     # 原有
+    'plus_damage', 'fierce_attack',  # 攻击类自身buff
+    'lifesteal', 'damage_boost',     # 攻击类自身buff
+    'arrow_rain',                    # 攻击类AOE，无需指定目标
+    'double_action', 'upgrade',      # 特殊类自身buff
 }
 
 
-def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
+def _apply_skill_card(room_id, player_id, skill_id, target_id=None, upgrade_target=None):
     """使用技能卡（公共逻辑，供 on_use_skill 和 AI 调用）
     返回 (success: bool, result_msg: str)
     """
@@ -700,6 +725,10 @@ def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
     # 计算回合倍率（数值翻倍：第8/16/24轮 ×2/×4/×8）
     from game.manager import get_multiplier
     multiplier = get_multiplier(room.game_state.round)
+
+    # 不死图腾卡改为濒死时自动询问，无需主动使用
+    if skill_type_key == 'immortal_totem':
+        return False, '不死图腾无需主动使用：当你濒死时会自动询问是否使用'
 
     # 无懈可击拦截：有害技能卡针对有 invulnerable 状态的玩家时，抵消效果
     _HARMFUL_SKILL_IDS = {'fire_attack', 'surprise_attack', 'crossbow', 'siege', 'poison', 'freeze',
@@ -768,14 +797,14 @@ def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
 
         # --- 自身buff攻击效果（无需目标）---
         if effect.get('permanent_damage_bonus'):
-            bonus = effect['permanent_damage_bonus']
+            bonus = effect['permanent_damage_bonus'] * multiplier
             player.status_effects['permanent_damage_bonus'] = player.status_effects.get('permanent_damage_bonus', 0) + bonus
             result_msg += '，每轮伤害永久+' + str(bonus)
 
-        if effect.get('attack_multiplier'):
-            mult = effect['attack_multiplier']
-            player.status_effects['attack_multiplier'] = player.status_effects.get('attack_multiplier', 1) * mult
-            result_msg += '，攻击伤害永久×' + str(mult)
+        if effect.get('one_attack_multiplier'):
+            mult = effect['one_attack_multiplier']
+            player.status_effects['next_attack_multiplier'] = mult
+            result_msg += '，下一次攻城伤害×' + str(mult) + '（单次生效）'
 
         if effect.get('lifesteal_percent'):
             pct = effect['lifesteal_percent']
@@ -830,34 +859,9 @@ def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
             result_msg += '，对有害技能卡免疫'
 
         if effect.get('flat_damage_reduction'):
-            reduction = effect['flat_damage_reduction']
+            reduction = effect['flat_damage_reduction'] * multiplier
             player.status_effects['flat_damage_reduction'] = player.status_effects.get('flat_damage_reduction', 0) + reduction
             result_msg += '，永久减伤' + str(reduction)
-
-        if effect.get('emergency_heal') and not effect.get('heal'):
-            # 不死图腾卡 - 被动触发：存储参数，在 process_round 中检测到死亡时触发
-            if effect.get('post_save_reduction'):
-                # 不死图腾卡：存储完整被动参数
-                player.status_effects['immortal_totem'] = {
-                    'emergency_heal': effect['emergency_heal'] * multiplier,
-                    'post_save_reduction': effect['post_save_reduction'],
-                    'post_save_heal': effect.get('post_save_heal', 0) * multiplier,
-                    'post_save_rounds': effect.get('post_save_rounds', 3)
-                }
-                result_msg += '，设定不死图腾（血量<0时+' + str(effect['emergency_heal'] * multiplier) + '血，' + str(effect.get('post_save_rounds', 3)) + '轮内减伤' + str(int(effect['post_save_reduction'] * 100)) + '%+每轮+' + str(effect.get('post_save_heal', 0) * multiplier) + '）'
-            else:
-                # 普通急救卡 - 即时触发
-                heal_amount = effect['emergency_heal'] * multiplier
-                if player.cities < 0 or not player.is_alive:
-                    player.cities += heal_amount
-                    if player.cities >= 0:
-                        player.is_alive = True
-                        player.is_spectator = False
-                        result_msg += '，紧急恢复 ' + str(heal_amount) + ' 城池，已复活！'
-                    else:
-                        result_msg += '，紧急恢复 ' + str(heal_amount) + ' 城池'
-                else:
-                    result_msg += '，城池数正常，急救卡效果未触发'
 
         if effect.get('recurring_heal'):
             amt = effect['recurring_heal'] * multiplier
@@ -906,7 +910,7 @@ def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
 
         # 撒豆成兵卡 - 城池-cost，delay_rounds轮后+delayed_heal
         if effect.get('delayed_heal'):
-            cost = effect.get('cost', 0)
+            cost = effect.get('cost', 0) * multiplier
             delayed_heal = effect['delayed_heal'] * multiplier
             delay_rounds = effect.get('delay_rounds', 3)
             if cost:
@@ -925,7 +929,7 @@ def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
 
         # 等价交换卡 - -cost城获得bonus_cards张技能卡
         if effect.get('bonus_cards'):
-            cost = effect.get('cost', 0)
+            cost = effect.get('cost', 0) * multiplier
             bonus_cards = effect['bonus_cards']
             if player.cities >= cost:
                 player.change_cities(-cost)
@@ -950,9 +954,9 @@ def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
             target = room.players.get(target_id)
             if not target or not target.is_alive:
                 return False, ''
-            max_diff = effect.get('max_diff', 100)
+            max_diff = effect.get('max_diff', 100) * multiplier
             if abs(player.cities - target.cities) > max_diff:
-                return False, ''
+                return False, f'城池差超过{max_diff}，无法使用逆转卡'
             player.cities, target.cities = target.cities, player.cities
             # 交换后3轮内双方不能攻击对方
             player.status_effects['reverse_no_attack'] = {'target': target_id, 'rounds': 3}
@@ -983,10 +987,6 @@ def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
                 p.status_effects['no_alliance'] = 3
             result_msg += '，解散了所有联盟，3轮内不能联盟'
 
-        elif effect.get('disguise'):
-            player.status_effects['disguise'] = True
-            result_msg += '，下回合行动将显示为随机行动'
-
         elif effect.get('emergency_heal'):
             # 急救卡 - 城池<0时使用
             heal_amount = effect['emergency_heal'] * multiplier
@@ -1003,7 +1003,7 @@ def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
 
         elif effect.get('steal_card'):
             # 瞒天过海卡 - 消耗cost城池偷走指定玩家一张卡
-            cost = effect.get('cost', 30)
+            cost = effect.get('cost', 30) * multiplier
             if player.cities < cost:
                 return False, '城池不足，需要' + str(cost) + '城池'
             if not target_id:
@@ -1035,16 +1035,31 @@ def _apply_skill_card(room_id, player_id, skill_id, target_id=None):
             result_msg += '，本轮可行动两次'
 
         elif effect.get('upgrade_skill'):
-            # 升级卡 - 升级一次技能(×2)
-            # 找到玩家另一张技能卡进行升级
-            other_skills = [s for s in player.skills if s.get('skill_type') != skill_type_key and s.get('id') != skill_card.get('id')]
-            if other_skills:
-                target_skill = random.choice(other_skills)
-                target_skill_name = target_skill.get('name', '技能卡')
-                # 通过status_effects标记升级
-                player.status_effects['upgrade_target'] = target_skill.get('skill_type') or target_skill.get('id')
-                player.status_effects['upgrade_multiplier'] = 2
-                result_msg += '，升级了【' + target_skill_name + '】效果×2'
+            # 升级卡 - 自主选择一张技能卡，效果数值×2（未指定时随机，供AI使用）
+            target_skill = None
+            if upgrade_target:
+                for s in player.skills:
+                    if s is not skill_card and (s.get('skill_type') == upgrade_target or s.get('id') == upgrade_target):
+                        target_skill = s
+                        break
+            if not target_skill:
+                other_skills = [s for s in player.skills if s is not skill_card]
+                if other_skills:
+                    target_skill = random.choice(other_skills)
+            if target_skill:
+                # 效果数值×2（百分比类封顶0.95，避免数值越界）
+                _PCT_KEYS = {'percent', 'damage_reduction', 'permanent_reduction', 'post_save_reduction',
+                             'lifesteal_percent', 'permanent_attack_bonus'}
+                eff = target_skill.get('effect')
+                if isinstance(eff, dict):
+                    for k, v in list(eff.items()):
+                        if isinstance(v, (int, float)) and not isinstance(v, bool):
+                            eff[k] = min(0.95, v * 2) if k in _PCT_KEYS else v * 2
+                    target_skill['effect'] = eff
+                if not target_skill.get('upgraded'):
+                    target_skill['name'] = (target_skill.get('name') or '技能卡') + '（已升级）'
+                target_skill['upgraded'] = True
+                result_msg += '，升级了【' + target_skill.get('name', '技能卡') + '】效果×2'
             else:
                 result_msg += '，没有可升级的技能卡'
 
@@ -1101,6 +1116,152 @@ def _build_game_state(room, viewer_id=None):
     }
 
 
+# ===== 濒死抉择（不死图腾）与统一死亡检查 =====
+
+_TOTEM_TIMEOUT = 15  # 濒死抉择超时秒数
+
+
+def _totem_card(player):
+    """返回玩家手中的不死图腾卡（未使用），无则返回 None"""
+    for s in player.skills:
+        if isinstance(s, dict) and s.get('skill_type') == 'immortal_totem':
+            return s
+    return None
+
+
+def _begin_totem_choice(room_id, player):
+    """玩家濒死且持有不死图腾：AI立即决策，真人弹窗选择（超时视为放弃）"""
+    room = room_manager.get_room(room_id)
+    if not room or not room.game_state:
+        return
+    gs = room.game_state
+    if not hasattr(gs, 'pending_totem'):
+        gs.pending_totem = []
+    if player.id in gs.pending_totem:
+        return
+    gs.pending_totem.append(player.id)
+
+    if player.is_ai:
+        card = _totem_card(player)
+        from game.manager import get_multiplier
+        heal = card['effect'].get('emergency_heal', 50) * get_multiplier(gs.round) if card else 0
+        use = bool(card) and (player.cities + heal) >= 0
+        _resolve_totem_choice(room_id, player.id, use)
+    else:
+        _emit('death_choice', {
+            'player_id': player.id,
+            'player_name': player.name,
+            'cities': player.cities,
+            'timeout': _TOTEM_TIMEOUT,
+        }, room=player.id)
+
+        def _timeout(pid=player.id):
+            r = room_manager.get_room(room_id)
+            if not r or not r.game_state:
+                return
+            if pid in getattr(r.game_state, 'pending_totem', []):
+                _resolve_totem_choice(room_id, pid, False, timeout=True)
+
+        threading.Timer(_TOTEM_TIMEOUT, _timeout).start()
+
+
+def _resolve_totem_choice(room_id, player_id, use, timeout=False):
+    """处理玩家的濒死抉择结果"""
+    room = room_manager.get_room(room_id)
+    if not room or not room.game_state:
+        return
+    gs = room.game_state
+    pending = getattr(gs, 'pending_totem', [])
+    if player_id not in pending:
+        return
+    pending.remove(player_id)
+
+    player = room.players.get(player_id)
+    if not player:
+        return
+
+    from game.manager import get_multiplier
+    multiplier = get_multiplier(gs.round)
+
+    if use:
+        card = _totem_card(player)
+        if card:
+            effect = card.get('effect', {})
+            heal = effect.get('emergency_heal', 50) * multiplier
+            player.skills.remove(card)
+            player.cities += heal
+            player.status_effects['immortal_totem'] = {
+                'triggered': True,
+                'post_save_reduction': effect.get('post_save_reduction', 0.2),
+                'post_save_heal': effect.get('post_save_heal', 5) * multiplier,
+                'post_save_rounds': effect.get('post_save_rounds', 3),
+            }
+            if player.cities >= 0:
+                msg = f"{player.name} 使用不死图腾，恢复{heal}城池，继续战斗！"
+            else:
+                player.is_alive = False
+                player.is_spectator = True
+                msg = f"{player.name} 使用不死图腾恢复{heal}城池，但仍不足，已阵亡"
+        else:
+            player.is_alive = False
+            player.is_spectator = True
+            msg = f"{player.name} 已无不死图腾，已阵亡"
+    else:
+        player.is_alive = False
+        player.is_spectator = True
+        msg = f"{player.name} {'超时未决定，' if timeout else ''}放弃使用不死图腾，已阵亡"
+
+    _emit('death_resolved', {
+        'message': msg,
+        'player_id': player_id,
+        'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
+    }, room=room_id)
+
+    # 所有抉择处理完毕后检查游戏是否结束
+    _check_game_end(room_id)
+    # 若其余玩家均已ready（濒死者阵亡后无人再点继续），由AI ready流程接管推进
+    if room.game_state.phase != GamePhase.FINISHED:
+        _auto_ready_ai(room_id)
+
+
+def _check_deaths(room_id):
+    """统一死亡检查：城池<0的存活玩家 → 持不死图腾则发起濒死抉择，否则直接阵亡"""
+    room = room_manager.get_room(room_id)
+    if not room or not room.game_state:
+        return
+    messages = []
+    for pid, p in list(room.players.items()):
+        if p.is_alive and not p.is_spectator and p.cities < 0:
+            if _totem_card(p):
+                _begin_totem_choice(room_id, p)
+            else:
+                p.is_alive = False
+                p.is_spectator = True
+                messages.append(f"{p.name} 城池耗尽，已阵亡")
+    if messages:
+        _emit('death_resolved', {
+            'messages': messages,
+            'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
+        }, room=room_id)
+    _check_game_end(room_id)
+
+
+def _check_game_end(room_id):
+    """检查游戏是否结束（有濒死抉择未完成时不判定）"""
+    room = room_manager.get_room(room_id)
+    if not room or not room.game_state:
+        return
+    gs = room.game_state
+    if getattr(gs, 'pending_totem', None):
+        return
+    if gs.phase == GamePhase.FINISHED:
+        return
+    alive = [p for p in room.players.values() if p.is_alive and not p.is_spectator]
+    if len(alive) <= 1:
+        gs.phase = GamePhase.FINISHED
+        _emit('game_ended', {'winner': alive[0].to_dict() if alive else None}, room=room_id)
+
+
 def _process_round(room_id):
     room = room_manager.get_room(room_id)
     if not room or not room.game_state:
@@ -1108,8 +1269,12 @@ def _process_round(room_id):
 
     results = room_manager.process_round(room_id)
 
-    # 设置会议阶段
-    room.game_state.phase = GamePhase.MEETING
+    # 统一死亡检查（含不死图腾濒死抉择），可能直接触发游戏结束
+    _check_deaths(room_id)
+
+    # 设置会议阶段（游戏已结束时保持FINISHED）
+    if room.game_state.phase != GamePhase.FINISHED:
+        room.game_state.phase = GamePhase.MEETING
 
     # 保存约战信息
     duels = results.get('duels', [])
@@ -1138,10 +1303,9 @@ def _process_round(room_id):
     room.game_state.round_history = room.game_state.round_history[-3:]
 
     alive = [p for p in room.players.values() if p.is_alive and not p.is_spectator]
-    if len(alive) <= 1:
-        winner = alive[0] if alive else None
+    if len(alive) <= 1 and room.game_state.phase == GamePhase.FINISHED:
+        # 游戏结束（game_ended 已在 _check_deaths 中发出）
         _emit('round_result', round_result_data, room=room_id)
-        _emit('game_ended', {'winner': winner.to_dict() if winner else None}, room=room_id)
         return
 
     gs = room.game_state
@@ -1279,12 +1443,9 @@ def _after_duel_end(room_id):
     if not room or not room.game_state:
         return
 
-    # 检查是否有人因约战死亡
-    alive = [p for p in room.players.values() if p.is_alive and not p.is_spectator]
-    if len(alive) <= 1:
-        winner_p = alive[0] if alive else None
-        room.game_state.phase = GamePhase.FINISHED
-        _emit('game_ended', {'winner': winner_p.to_dict() if winner_p else None}, room=room_id)
+    # 检查是否有人因约战死亡（统一死亡检查，含不死图腾濒死抉择）
+    _check_deaths(room_id)
+    if room.game_state.phase == GamePhase.FINISHED:
         return
 
     if hasattr(room.game_state, '_pending_duels') and room.game_state._pending_duels:
@@ -1400,7 +1561,7 @@ def _start_next_round(room_id):
         p.repair_active = False
         # 清除单回合状态效果
         for key in ['skip_turn', 'force_attack', 'ignore_defend',
-                     'damage_reduction', 'reflect', 'immune', 'untargetable', 'disguise',
+                     'damage_reduction', 'reflect', 'immune', 'untargetable',
                      'invulnerable', 'extra_action']:
             p.status_effects.pop(key, None)
         # 眩晕：支持计数器，递减而非直接清除
@@ -1500,6 +1661,9 @@ def _auto_ready_ai(room_id):
     ai_players = [p for p in room.players.values() if p.is_ai and p.is_alive and not p.is_spectator]
     for ai in ai_players:
         gs.ready_players.add(ai.id)
+    # 有濒死抉择未完成时不进入下一轮
+    if getattr(gs, 'pending_totem', None):
+        return
     # 检查是否所有存活玩家都ready了
     alive = [p for p in room.players.values() if p.is_alive and not p.is_spectator]
     alive_ready = [pid for pid in gs.ready_players if pid in {p.id for p in alive}]
@@ -1768,12 +1932,9 @@ def _do_duel_shot(room_id, player_id, shots):
             'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
         }, room=room_id)
 
-        # 检查是否有人因约战死亡
-        alive = [p for p in room.players.values() if p.is_alive and not p.is_spectator]
-        if len(alive) <= 1:
-            winner_p = alive[0] if alive else None
-            room.game_state.phase = GamePhase.FINISHED
-            _emit('game_ended', {'winner': winner_p.to_dict() if winner_p else None}, room=room_id)
+        # 统一死亡检查（含不死图腾濒死抉择）
+        _check_deaths(room_id)
+        if room.game_state.phase == GamePhase.FINISHED:
             return
 
         # 如果还有待处理的约战，继续下一场

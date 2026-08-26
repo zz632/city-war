@@ -100,10 +100,8 @@ class Player:
         return None
     
     def change_cities(self, amount: int):
-        """改变城池数"""
+        """改变城池数（死亡判定统一延迟到回合结算，便于不死图腾抉择）"""
         self.cities += amount
-        if self.cities < 0:
-            self.is_alive = False
 
 
 @dataclass

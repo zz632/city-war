@@ -896,6 +896,39 @@ function initGame() {
 
     socket.on('duel_ended', data => onDuelEnded(data));
 
+    // 濒死抉择（不死图腾）：仅濒死玩家收到
+    socket.on('death_choice', data => {
+        if (data.player_id !== myPlayerId) return;
+        showDeathChoicePanel(data);
+    });
+
+    // 濒死抉择结果：全员可见
+    socket.on('death_resolved', data => {
+        hideDeathChoicePanel();
+        const msgs = data.messages || (data.message ? [data.message] : []);
+        msgs.forEach(m => toast(m, 'info'));
+        _godViewHistory.push({ round: parseInt(document.getElementById('statRound')?.textContent || '1'), type: 'death', text: '[濒死] ' + msgs.join('；') });
+        if (data.players) {
+            const round = parseInt(document.getElementById('statRound')?.textContent || '1');
+            renderGameState({ players: data.players, round: round });
+            // 恢复面板：存活者回到会议小结，阵亡者进入上帝视角
+            const me = Object.values(data.players).find(p => p.id === myPlayerId);
+            if (me) {
+                if (me.is_alive && !me.is_spectator) {
+                    const mp = document.getElementById('meetingPanel');
+                    if (mp) mp.style.display = 'block';
+                } else {
+                    ['actionPanel', 'meetingPanel', 'duelPanel', 'auctionPanel'].forEach(id => {
+                        const el = document.getElementById(id);
+                        if (el) el.style.display = 'none';
+                    });
+                    const apTitle = document.getElementById('actionPanelTitle');
+                    if (apTitle) apTitle.style.display = 'none';
+                }
+            }
+        }
+    });
+
     socket.on('duel_rejected', data => {
         // 显示拒绝提示
         const rejectedMsg = (data.rejecter_name || '?') + ' 拒绝了约战，贡奉了 ' + (data.tribute || 0) + ' 城池给 ' + (data.other_name || '?');
@@ -996,6 +1029,8 @@ function selectAction(action) {
         enableTargetSelection(action);
     } else if (action === 'dissolve_alliance') {
         submitAction('dissolve_alliance');
+    } else if (action === 'skip') {
+        submitAction('skip');
     }
 }
 
@@ -1160,7 +1195,7 @@ function onActionAccepted(action) {
     const actionNames = {
         'attack': '攻城', 'defend': '守城', 'jungle': '打野',
         'duel': '约战', 'repair': '修城', 'alliance': '结盟',
-        'dissolve_alliance': '解盟'
+        'dissolve_alliance': '解盟', 'skip': '跳过'
     };
     showHint('已选择：' + (actionNames[action] || action) + '（可点击其他操作更改）');
 
@@ -1541,7 +1576,7 @@ function toggleGodView() {
 // 技能卡需要目标的类型和卡牌ID
 const SKILL_NEEDS_TARGET = ['attack', 'special'];
 const SKILL_NO_TARGET_IDS = [
-    'disguise', 'first_aid',          // 原有
+    'first_aid',                      // 原有
     'plus_damage', 'fierce_attack',   // 攻击类自身buff
     'lifesteal', 'damage_boost',      // 攻击类自身buff
     'arrow_rain',                     // 攻击类AOE
@@ -1557,6 +1592,17 @@ function useSkillCard(idx) {
     const card = mySkills[idx];
     const t = card.type || 'special';
     const skillId = card.skill_type || '';
+
+    // 升级卡：先选择要升级的目标技能卡
+    if (skillId === 'upgrade') {
+        const others = mySkills.filter((s, j) => j !== idx);
+        if (!others.length) {
+            toast('没有可升级的技能卡', 'error');
+            return;
+        }
+        showUpgradeTargetSelection(card, others);
+        return;
+    }
 
     // 判断是否需要选择目标
     const needsTarget = SKILL_NEEDS_TARGET.includes(t) && !SKILL_NO_TARGET_IDS.includes(skillId);
@@ -1576,6 +1622,7 @@ function useSkillCard(idx) {
 function cancelSkillCard() {
     window._pendingSkillIdx = null;
     window._pendingSkillCard = null;
+    window._upgradeOptions = null;
     // 清除选中状态
     document.querySelectorAll('.p-card').forEach(c => {
         c.classList.remove('selected');
@@ -1586,7 +1633,35 @@ function cancelSkillCard() {
     toast('已取消使用技能卡', 'info');
 }
 
-function submitSkill(card, targetId) {
+// 升级卡：选择要升级的目标技能卡
+function showUpgradeTargetSelection(upgradeCard, others) {
+    const hint = document.getElementById('actionHint');
+    if (!hint) return;
+    window._pendingSkillCard = upgradeCard;
+    window._upgradeOptions = others;
+    const btns = others.map((s, i) =>
+        `<button class="btn btn-secondary" style="padding:6px 12px;font-size:13px;margin:3px" onclick="submitUpgradeTarget(${i})">${esc(s.name || '技能卡')}${s.upgraded ? '（可再升级）' : ''}</button>`
+    ).join('');
+    hint.innerHTML = `
+        <div style="text-align:center">
+            <div style="margin-bottom:8px">升级卡：选择一张技能卡，效果数值×2</div>
+            <div>${btns}</div>
+            <div style="margin-top:6px"><button class="btn" style="padding:6px 12px;font-size:13px" onclick="cancelSkillCard()">取消</button></div>
+        </div>
+    `;
+    hint.style.display = 'block';
+}
+
+function submitUpgradeTarget(i) {
+    const others = window._upgradeOptions || [];
+    const target = others[i];
+    const card = window._pendingSkillCard;
+    window._upgradeOptions = null;
+    if (!target || !card) return;
+    submitSkill(card, null, target.skill_type || target.id);
+}
+
+function submitSkill(card, targetId, upgradeTarget) {
     if (!socket) return;
     const data = {
         room_id: myRoomId,
@@ -1594,9 +1669,11 @@ function submitSkill(card, targetId) {
         skill_id: card.skill_type || card.id
     };
     if (targetId) data.target_id = targetId;
+    if (upgradeTarget) data.upgrade_target = upgradeTarget;
     socket.emit('use_skill', data);
     window._pendingSkillIdx = null;
     window._pendingSkillCard = null;
+    window._upgradeOptions = null;
     const hint = document.getElementById('actionHint');
     if (hint) hint.style.display = 'none';
 }
@@ -1652,7 +1729,7 @@ function showMeetingPanel(data) {
             const cityChanges = data.city_changes || {};
             const actions = data.actions || {};
             const arr = Array.isArray(players) ? players : Object.values(players);
-            const actionLabels = { 'attack': '攻城', 'defend': '守城', 'jungle': '打野', 'duel': '约战', 'repair': '修城', 'alliance': '结盟', 'dissolve_alliance': '解盟' };
+            const actionLabels = { 'attack': '攻城', 'defend': '守城', 'jungle': '打野', 'duel': '约战', 'repair': '修城', 'alliance': '结盟', 'dissolve_alliance': '解盟', 'skip': '跳过' };
 
             arr.forEach(p => {
                 const change = cityChanges[p.id] || 0;
@@ -1759,7 +1836,7 @@ function renderRoundResult(data) {
                 let godViewHtml = '';
                 if (amSpectator && p.id !== myPlayerId) {
                     if (p.action) {
-            const actionNames = { 'attack': '攻城', 'defend': '守城', 'jungle': '打野', 'duel': '约战', 'repair': '修城', 'alliance': '结盟', 'dissolve_alliance': '解盟' };
+            const actionNames = { 'attack': '攻城', 'defend': '守城', 'jungle': '打野', 'duel': '约战', 'repair': '修城', 'alliance': '结盟', 'dissolve_alliance': '解盟', 'skip': '跳过' };
                         godViewHtml += `<div style="font-size:11px;color:var(--orange);margin-top:4px">行动：${actionNames[p.action.type] || p.action.type || '?'}</div>`;
                     }
                     if (p.skills && p.skills.length > 0) {
@@ -1867,15 +1944,18 @@ function renderRoundResult(data) {
         }
     });
 
-    // 切换到会议面板
-    showMeetingPanel({
-        players: data.players || {},
-        city_changes: data.city_changes || {},
-        skill_cards: data.skill_cards || [],
-        skill_cards_drawn: (data.skill_cards || []).length,
-        messages: data.messages || [],
-        actions: data.actions || {}
-    });
+    // 切换到会议面板（濒死抉择面板显示中时优先抉择，抉择结束后再恢复）
+    const dcp = document.getElementById('deathChoicePanel');
+    if (!dcp || dcp.style.display === 'none') {
+        showMeetingPanel({
+            players: data.players || {},
+            city_changes: data.city_changes || {},
+            skill_cards: data.skill_cards || [],
+            skill_cards_drawn: (data.skill_cards || []).length,
+            messages: data.messages || [],
+            actions: data.actions || {}
+        });
+    }
 
     // 在聊天区域记录简要信息
     const box = document.getElementById('chatMessages');
@@ -1891,7 +1971,7 @@ function renderRoundResult(data) {
         // 显示行动摘要
         const chatActions = data.actions || {};
         const chatPlayers = Array.isArray(data.players) ? data.players : Object.values(data.players || {});
-        const chatActionLabels = { 'attack': '攻城', 'defend': '守城', 'jungle': '打野', 'duel': '约战', 'repair': '修城', 'alliance': '结盟', 'dissolve_alliance': '解盟' };
+        const chatActionLabels = { 'attack': '攻城', 'defend': '守城', 'jungle': '打野', 'duel': '约战', 'repair': '修城', 'alliance': '结盟', 'dissolve_alliance': '解盟', 'skip': '跳过' };
         const actionLines = [];
         Object.keys(chatActions).forEach(pid => {
             const a = chatActions[pid];
@@ -2021,6 +2101,54 @@ function onAuctionPass() {
 function hideAuctionPanel() {
     const aup = document.getElementById('auctionPanel');
     if (aup) aup.style.display = 'none';
+}
+
+// ===== 濒死抉择（不死图腾） =====
+function showDeathChoicePanel(data) {
+    const panel = document.getElementById('deathChoicePanel');
+    const info = document.getElementById('deathChoiceInfo');
+    const timerEl = document.getElementById('deathChoiceTimer');
+    if (!panel) return;
+
+    if (info) {
+        info.innerHTML = `
+            <div style="margin-bottom:6px">你的城池已降至 <strong style="color:var(--red)">${data.cities}</strong>，濒临死亡！</div>
+            <div>是否使用<strong style="color:var(--gold)">不死图腾</strong>？</div>
+            <div style="font-size:13px;margin-top:4px">使用后恢复大量城池；若仍不足则阵亡；放弃则直接阵亡进入上帝视角</div>
+        `;
+    }
+
+    // 隐藏其他面板
+    ['actionPanel', 'meetingPanel', 'duelPanel', 'auctionPanel'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    });
+    panel.style.display = 'block';
+
+    // 倒计时
+    if (window._deathChoiceTimer) { clearInterval(window._deathChoiceTimer); window._deathChoiceTimer = null; }
+    let left = data.timeout || 15;
+    if (timerEl) timerEl.textContent = left + ' 秒后自动放弃';
+    window._deathChoiceTimer = setInterval(() => {
+        left--;
+        if (left <= 0) {
+            clearInterval(window._deathChoiceTimer);
+            window._deathChoiceTimer = null;
+        }
+        if (timerEl) timerEl.textContent = left > 0 ? left + ' 秒后自动放弃' : '已超时，视为放弃';
+    }, 1000);
+}
+
+function hideDeathChoicePanel() {
+    const panel = document.getElementById('deathChoicePanel');
+    if (panel) panel.style.display = 'none';
+    if (window._deathChoiceTimer) { clearInterval(window._deathChoiceTimer); window._deathChoiceTimer = null; }
+}
+
+function submitDeathChoice(use) {
+    if (window._deathChoiceTimer) { clearInterval(window._deathChoiceTimer); window._deathChoiceTimer = null; }
+    hideDeathChoicePanel();
+    socket.emit('death_choice', { room_id: myRoomId, player_id: myPlayerId, use: !!use });
 }
 
 function showDuelRequest(data) {
