@@ -831,8 +831,8 @@ function initGame() {
         if (data.action_detail) {
             const round = parseInt(document.getElementById('statRound')?.textContent || '1');
             const detail = data.action_detail;
-            const actionNames = { 'attack': '攻城', 'defend': '守城', 'jungle': '打野', 'duel': '约战', 'repair': '修城', 'alliance': '结盟' };
-            let text = data.player_name + ' 提交行动 [' + (actionNames[detail.type] || detail.type) + ']';
+            const actionNames = { 'attack': '攻城', 'defend': '守城', 'jungle': '打野', 'duel': '约战', 'repair': '修城', 'alliance': '结盟', 'dissolve_alliance': '解盟', 'skip': '跳过' };
+            let text = data.player_name + ' 提交行动 [' + (actionNames[detail.type] || detail.type) + (detail.extra ? '·二般人' : '') + ']';
             if (detail.target_name) text += ' | 目标：' + detail.target_name;
             if (detail.bet) text += ' | 赌注：' + detail.bet + ' 城池';
             _godViewHistory.push({ round: round, type: 'action', text: text });
@@ -842,7 +842,15 @@ function initGame() {
         }
 
         if (data.player_id === myPlayerId) {
+            const detail = data.action_detail || {};
             onActionAccepted(data.action_type || selectedAction);
+            if (detail.extra) {
+                toast('二般人：第二行动已提交', 'success');
+            } else if (_myStatusEffects && _myStatusEffects.extra_action > 0) {
+                toast('二般人生效：本轮还可再提交一次行动（攻城/守城/打野/修城/跳过）', 'info');
+                showHint('二般人生效：请再选择一次行动');
+                actionSubmitted = false; // 允许继续提交第二行动
+            }
         } else {
             toast(data.player_name + ' 已提交行动', 'info');
         }
@@ -1290,8 +1298,9 @@ function renderGameState(data) {
         }
     }
 
-    // 更新技能卡区域
+    // 更新技能卡区域与自己的增益状态栏
     updateSkillCards(mySkills);
+    if (myData && myData.status_effects) updateMyStatusEffects(myData.status_effects);
 
     // 后期操作
     const lateActions = document.getElementById('lateActions');
@@ -1356,9 +1365,75 @@ function updatePlayerPublicState(players) {
             myCities = p.cities;
             const cardsEl = document.getElementById('statCards');
             if (cardsEl && p.skills_count !== undefined) cardsEl.textContent = p.skills_count;
+            if (p.status_effects) updateMyStatusEffects(p.status_effects);
         }
     });
 }
+
+// ===== 增益状态栏（自己的 status_effects） =====
+let _myStatusEffects = {};
+
+const BUFF_LABELS = {
+    next_attack_multiplier: v => '猛攻：下次攻城×' + v,
+    lifesteal_percent: v => '吸血：攻击吸取' + Math.round(v * 100) + '%总血量',
+    permanent_damage_bonus: v => '伤害永久+' + v,
+    permanent_attack_bonus: v => '攻击加成+' + Math.round(v * 100) + '%',
+    damage_reduction: v => '减伤' + Math.round(v * 100) + '%',
+    permanent_reduction: v => '永久减伤' + Math.round(v * 100) + '%',
+    flat_damage_reduction: v => '定值减伤' + v,
+    reflect: v => '被攻反弹' + v,
+    immune: () => '伤害免疫',
+    invulnerable: () => '无懈可击（抵消有害技能）',
+    untargetable: () => '不可被选中',
+    ignore_defend: () => '攻城无视守城',
+    stun: v => '眩晕' + v + '轮',
+    skip_turn: () => '下轮跳过',
+    force_attack: () => '强制攻城',
+    recurring: v => '屯田：每轮+' + (v.amount || 0) + '（剩' + (v.rounds || 0) + '轮）',
+    recurring_heal: v => '每轮回血+' + v,
+    delay_troops: v => '撒豆成兵（剩' + (v.rounds || 0) + '轮）',
+    income_multiplier: v => '收益×' + v,
+    double_gain: () => '收益×2',
+    extra_action: v => '二般人：还可行动' + v + '次',
+    no_alliance: v => '禁止联盟' + v + '轮',
+    reverse_no_attack: () => '逆转：3轮内不能互攻',
+    immortal_totem: v => '图腾守护：减伤' + Math.round((v.post_save_reduction || 0) * 100) + '%（剩' + (v.post_save_rounds || 0) + '轮）'
+};
+
+function updateMyStatusEffects(effects) {
+    if (!effects || typeof effects !== 'object') return;
+    _myStatusEffects = effects;
+    renderBuffBar();
+}
+
+function renderBuffBar() {
+    const bar = document.getElementById('buffBar');
+    const list = document.getElementById('buffList');
+    if (!bar || !list) return;
+    if (typeof amSpectator !== 'undefined' && amSpectator) {
+        bar.style.display = 'none';
+        return;
+    }
+
+    const entries = Object.entries(_myStatusEffects || {}).filter(([k]) => BUFF_LABELS[k]);
+    if (!entries.length) {
+        bar.style.display = 'none';
+        return;
+    }
+    bar.style.display = 'block';
+    list.innerHTML = '';
+    entries.forEach(([k, v]) => {
+        try {
+            const label = BUFF_LABELS[k](v);
+            const chip = document.createElement('span');
+            chip.className = 'skill-card-type type-defense';
+            chip.style.cssText = 'font-size:11px;padding:3px 8px;border-radius:10px;display:inline-block';
+            chip.textContent = label;
+            list.appendChild(chip);
+        } catch (e) { /* 忽略异常值 */ }
+    });
+}
+
 
 function updateSkillCards(skills) {
     const area = document.getElementById('skillCardArea');

@@ -173,6 +173,11 @@
                 <div class="card" id="skillCardArea" style="display:none">
                     <div class="section-title">技能卡</div>
                     <div id="skillCards"></div>
+                    <!-- 自己的增益状态栏 -->
+                    <div id="buffBar" style="display:none;margin-top:10px;border-top:1px solid var(--border);padding-top:8px">
+                        <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px">增益状态</div>
+                        <div id="buffList" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+                    </div>
                 </div>
 
                 <!-- 聊天 -->
@@ -229,6 +234,21 @@
 
                 <h4>限制</h4>
                 <p>同一种操作连续执行不能超过 <strong>5</strong> 次。持不死图腾时濒死会自动询问是否使用，可恢复大量城池继续战斗。</p>
+
+                <h4 style="cursor:pointer" onclick="const el=document.getElementById('skillCodexBody');el.style.display=el.style.display==='none'?'block':'none'">技能卡图鉴（点击展开/收起）</h4>
+                <div id="skillCodexBody" style="display:none">
+                    {% for group in skill_groups %}
+                    <p style="margin:8px 0 4px;font-weight:600">{{ { 'attack': '攻击类', 'defense': '防御类', 'resource': '资源类', 'special': '特殊类' }[group.type] }}（{{ group.cards|length }} 张）</p>
+                    <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px">
+                        {% for card in group.cards %}
+                        <tr style="border-bottom:1px solid var(--border)">
+                            <td style="padding:4px 8px 4px 0;white-space:nowrap;font-weight:600">{{ card.name }}</td>
+                            <td style="padding:4px 0;color:var(--text-dim)">{{ card.description }}</td>
+                        </tr>
+                        {% endfor %}
+                    </table>
+                    {% endfor %}
+                </div>
             </div>
         </div>
     </div>
@@ -236,6 +256,6 @@
     <div id="toast" class="toast"></div>
     <script src="/static/js/socket.io.min.js"></script>
     <script src="/static/js/settings.js?v=17"></script>
-    <script src="/static/js/main.js?v=11"></script>
+    <script src="/static/js/main.js?v=12"></script>
 </body>
 </html>

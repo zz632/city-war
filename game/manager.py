@@ -272,10 +272,149 @@ class RoomManager:
             'bet': bet,
             'timestamp': time.time()
         }
-        
+
+        # 二般人卡：已提交主行动且还有额外行动次数时，作为第二行动提交
+        if player_sid in game_state.actions and player.status_effects.get('extra_action'):
+            if action_type not in ('attack', 'defend', 'jungle', 'repair', 'skip'):
+                return False  # 第二行动仅支持基础行动
+            game_state.extra_actions[player_sid] = action
+            player.status_effects['extra_action'] = player.status_effects['extra_action'] - 1
+            return True
+
         game_state.actions[player_sid] = action
         return True
-    
+
+    def _resolve_attack(self, room, game_state, results, pid, action,
+                        multiplier, is_mutual=False, attacked_players=None):
+        """结算一次攻城（主行动与二般人第二行动共用）
+        吸血卡：实际造成伤害后，吸取目标当前城池（总血量）的百分比
+        """
+        attacker = room.players[pid]
+        target = room.players.get(action.get('target_id'))
+        if not target or not target.is_alive:
+            return
+
+        # 联盟内成员间攻击无效
+        if attacker.alliance_with and attacker.alliance_with == action.get('target_id'):
+            results['actions'][pid] = {'type': 'attack', 'target': action.get('target_id'), 'damage': 0, 'alliance_blocked': True}
+            results['messages'].append(attacker.name + ' 与 ' + target.name + ' 是联盟，无法攻击')
+            return
+
+        if attacked_players is not None:
+            attacked_players.add(action.get('target_id'))
+
+        # 计算伤害：固定25 * multiplier
+        damage = 25 * multiplier
+
+        # 攻击者伤害加成（永久buff）
+        if attacker.status_effects.get('permanent_damage_bonus'):
+            damage += attacker.status_effects['permanent_damage_bonus']
+        # 猛攻卡：下一次攻城伤害×N（单次生效）
+        next_atk_mult = attacker.status_effects.get('next_attack_multiplier')
+        if next_atk_mult:
+            damage = int(damage * next_atk_mult)
+        if attacker.status_effects.get('permanent_attack_bonus'):
+            damage = int(damage * (1 + attacker.status_effects['permanent_attack_bonus']))
+
+        # 修城方受到的伤害翻倍
+        if target.repair_active:
+            damage = damage * 2
+
+        # 目标伤害减免（百分比）
+        if target.status_effects.get('damage_reduction'):
+            damage = int(damage * (1 - target.status_effects['damage_reduction']))
+
+        # 目标永久减伤（百分比）
+        if target.status_effects.get('permanent_reduction'):
+            damage = int(damage * (1 - target.status_effects['permanent_reduction']))
+
+        # 目标定值减伤（磐石堡垒卡）
+        if target.status_effects.get('flat_damage_reduction'):
+            damage = max(0, damage - target.status_effects['flat_damage_reduction'])
+
+        # 不死图腾减伤（触发后3轮内）
+        totem = target.status_effects.get('immortal_totem')
+        if totem and totem.get('triggered') and totem.get('post_save_reduction'):
+            damage = int(damage * (1 - totem['post_save_reduction']))
+
+        # 双方互攻：伤害-100（最低为0），在所有加成计算之后统一扣除，
+        # 保证双方同时进攻时判定对称
+        if is_mutual:
+            damage = max(0, damage - 100)
+
+        # 目标免疫
+        if target.status_effects.get('immune'):
+            damage = 0
+
+        dealt = 0  # 目标实际承受的城池损失（吸血判定用）
+        target_action = game_state.actions.get(action.get('target_id'))
+        target_defending = bool(target_action and target_action['action_type'] == 'defend')
+
+        # 检查目标是否守城
+        if target_defending:
+            # 奇袭卡无视守城
+            if attacker.status_effects.get('ignore_defend'):
+                target.change_cities(-damage)
+                attacker.change_cities(damage)
+                results['city_changes'][action.get('target_id')] -= damage
+                results['city_changes'][pid] += damage
+                dealt = damage
+                results['actions'][pid] = {
+                    'type': 'attack',
+                    'target': action.get('target_id'),
+                    'damage': damage,
+                    'ignore_defend': True
+                }
+            else:
+                # 守城反弹：攻击方 -20*multiplier，守城方 +20*multiplier
+                counter_damage = 20 * multiplier
+                attacker.change_cities(-counter_damage)
+                target.change_cities(counter_damage)
+                results['city_changes'][pid] -= counter_damage
+                results['city_changes'][action.get('target_id')] += counter_damage
+                results['actions'][pid] = {
+                    'type': 'attack',
+                    'target': action.get('target_id'),
+                    'damage': 0,
+                    'reflected': counter_damage
+                }
+        else:
+            # 攻城成功，对方损失的城池转移到攻击方
+            actual_damage = damage
+            # 空城卡/诈降卡反弹
+            if target.status_effects.get('reflect'):
+                reflect_dmg = target.status_effects['reflect']
+                attacker.change_cities(-reflect_dmg)
+                target.change_cities(reflect_dmg)
+                results['city_changes'][pid] -= reflect_dmg
+                results['city_changes'][action.get('target_id')] += reflect_dmg
+                # 免疫则不受伤
+                if target.status_effects.get('immune'):
+                    actual_damage = 0
+
+            target.change_cities(-actual_damage)
+            attacker.change_cities(actual_damage)
+            results['city_changes'][action.get('target_id')] -= actual_damage
+            results['city_changes'][pid] += actual_damage
+            dealt = actual_damage
+            results['actions'][pid] = {
+                'type': 'attack',
+                'target': action.get('target_id'),
+                'damage': damage
+            }
+
+        # 猛攻卡单次加成已生效，消耗之
+        if next_atk_mult:
+            attacker.status_effects.pop('next_attack_multiplier', None)
+
+        # 吸血卡：实际造成伤害后，吸取目标当前城池（总血量）的百分比
+        if attacker.status_effects.get('lifesteal_percent') and dealt > 0 and target.cities > 0:
+            lifesteal = int(target.cities * attacker.status_effects['lifesteal_percent'])
+            if lifesteal > 0:
+                attacker.change_cities(lifesteal)
+                results['city_changes'][pid] = results['city_changes'].get(pid, 0) + lifesteal
+                results['messages'].append(attacker.name + ' 吸取了 ' + target.name + ' ' + str(lifesteal) + ' 城池')
+
     def process_round(self, room_id: str) -> dict:
         """处理回合"""
         if room_id not in self.rooms:
@@ -398,124 +537,14 @@ class RoomManager:
         # 处理攻城伤害
         for pid, action in game_state.actions.items():
             if action['action_type'] == 'attack':
-                attacker = room.players[pid]
-                target = room.players.get(action.get('target_id'))
-                if not target or not target.is_alive:
-                    continue
-                # 联盟内成员间攻击无效
-                if attacker.alliance_with and attacker.alliance_with == action.get('target_id'):
-                    results['actions'][pid] = {'type': 'attack', 'target': action.get('target_id'), 'damage': 0, 'alliance_blocked': True}
-                    results['messages'].append(attacker.name + ' 与 ' + target.name + ' 是联盟，无法攻击')
-                    continue
-
-                # 检查是否互相攻城
                 is_mutual = any(
                     (pid == p1 and action.get('target_id') == p2) or
                     (pid == p2 and action.get('target_id') == p1)
                     for p1, p2 in attack_pairs
                 )
+                self._resolve_attack(room, game_state, results, pid, action,
+                                     multiplier, is_mutual, attacked_players)
 
-                # 计算伤害：固定25 * multiplier
-                damage = 25 * multiplier
-
-                # 攻击者伤害加成（永久buff）
-                if attacker.status_effects.get('permanent_damage_bonus'):
-                    damage += attacker.status_effects['permanent_damage_bonus']
-                # 猛攻卡：下一次攻城伤害×N（单次生效）
-                next_atk_mult = attacker.status_effects.get('next_attack_multiplier')
-                if next_atk_mult:
-                    damage = int(damage * next_atk_mult)
-                if attacker.status_effects.get('permanent_attack_bonus'):
-                    damage = int(damage * (1 + attacker.status_effects['permanent_attack_bonus']))
-
-                # 修城方受到的伤害翻倍
-                if target.repair_active:
-                    damage = damage * 2
-
-                # 目标伤害减免（百分比）
-                if target.status_effects.get('damage_reduction'):
-                    damage = int(damage * (1 - target.status_effects['damage_reduction']))
-
-                # 目标永久减伤（百分比）
-                if target.status_effects.get('permanent_reduction'):
-                    damage = int(damage * (1 - target.status_effects['permanent_reduction']))
-
-                # 目标定值减伤（磐石堡垒卡）
-                if target.status_effects.get('flat_damage_reduction'):
-                    damage = max(0, damage - target.status_effects['flat_damage_reduction'])
-
-                # 不死图腾减伤（触发后3轮内）
-                totem = target.status_effects.get('immortal_totem')
-                if totem and totem.get('triggered') and totem.get('post_save_reduction'):
-                    damage = int(damage * (1 - totem['post_save_reduction']))
-
-                # 双方互攻：伤害-100（最低为0），在所有加成计算之后统一扣除，
-                # 保证双方同时进攻时判定对称
-                if is_mutual:
-                    damage = max(0, damage - 100)
-
-                # 目标免疫
-                if target.status_effects.get('immune'):
-                    damage = 0
-
-                # 检查目标是否守城
-                target_action = game_state.actions.get(action.get('target_id'))
-                if target_action and target_action['action_type'] == 'defend':
-                    # 奇袭卡无视守城
-                    if attacker.status_effects.get('ignore_defend'):
-                        target.change_cities(-damage)
-                        attacker.change_cities(damage)
-                        results['city_changes'][action.get('target_id')] -= damage
-                        results['city_changes'][pid] += damage
-                        results['actions'][pid] = {
-                            'type': 'attack',
-                            'target': action.get('target_id'),
-                            'damage': damage,
-                            'ignore_defend': True
-                        }
-                    else:
-                        # 守城反弹：攻击方 -20*multiplier，守城方 +20*multiplier
-                        counter_damage = 20 * multiplier
-                        attacker.change_cities(-counter_damage)
-                        target.change_cities(counter_damage)
-                        results['city_changes'][pid] -= counter_damage
-                        results['city_changes'][action.get('target_id')] += counter_damage
-                else:
-                    # 攻城成功，对方损失的城池转移到攻击方
-                    actual_damage = damage
-                    # 空城卡/诈降卡反弹
-                    if target.status_effects.get('reflect'):
-                        reflect_dmg = target.status_effects['reflect']
-                        attacker.change_cities(-reflect_dmg)
-                        target.change_cities(reflect_dmg)
-                        results['city_changes'][pid] -= reflect_dmg
-                        results['city_changes'][action.get('target_id')] += reflect_dmg
-                        # 免疫则不受伤
-                        if target.status_effects.get('immune'):
-                            actual_damage = 0
-
-                    target.change_cities(-actual_damage)
-                    attacker.change_cities(actual_damage)
-                    results['city_changes'][action.get('target_id')] -= actual_damage
-                    results['city_changes'][pid] += actual_damage
-                
-                results['actions'][pid] = {
-                    'type': 'attack',
-                    'target': action.get('target_id'),
-                    'damage': damage if not (target_action and target_action['action_type'] == 'defend') else 0
-                }
-
-                # 猛攻卡单次加成已生效，消耗之
-                if next_atk_mult:
-                    attacker.status_effects.pop('next_attack_multiplier', None)
-
-                # 吸血卡：攻击造成伤害后吸取百分比总血量
-                if attacker.status_effects.get('lifesteal_percent') and damage > 0:
-                    lifesteal = int(damage * attacker.status_effects['lifesteal_percent'])
-                    if lifesteal > 0:
-                        attacker.change_cities(lifesteal)
-                        results['city_changes'][pid] += lifesteal
-        
         # 处理守城——无被动加成，仅在被攻击时反弹
         for pid, action in game_state.actions.items():
             if action['action_type'] == 'defend':
@@ -652,6 +681,40 @@ class RoomManager:
                     bonus = int(change * (bonus_mult - 1))
                     player.change_cities(bonus)
                     results['city_changes'][pid] += bonus
+
+        # 处理二般人卡的第二行动（主行动结算完成后执行）
+        for pid, action in list(game_state.extra_actions.items()):
+            player = room.players.get(pid)
+            if not player or not player.is_alive:
+                continue
+            atype = action['action_type']
+            if atype == 'attack':
+                results['messages'].append(player.name + ' 二般人卡生效：额外行动一次')
+                self._resolve_attack(room, game_state, results, pid, action, multiplier)
+            elif atype == 'jungle':
+                results['messages'].append(player.name + ' 二般人卡生效：额外行动一次')
+                if random.random() < 0.5:
+                    gain = 10 * multiplier
+                    player.change_cities(gain)
+                    results['city_changes'][pid] = results['city_changes'].get(pid, 0) + gain
+                    results['messages'].append(player.name + f' 额外打野获得{gain}城池')
+                else:
+                    skill = get_random_skill()
+                    player.add_skill(skill)
+                    game_state.skill_cards_drawn += 1
+                    results['skill_cards'].append({'player_id': pid, 'card': skill, 'result': 'skill_card'})
+                    results['messages'].append(player.name + ' 额外打野获得技能卡：' + skill.get('name', ''))
+            elif atype == 'repair':
+                repair_gain = 30 * multiplier
+                player.change_cities(repair_gain)
+                results['city_changes'][pid] = results['city_changes'].get(pid, 0) + repair_gain
+                results['messages'].append(player.name + ' 二般人卡生效：额外修城获得' + str(repair_gain) + '城池')
+            else:
+                results['messages'].append(player.name + ' 二般人卡生效：额外行动（' + atype + '）')
+
+        # 二般人额外行动次数跨轮清零（当轮未用即作废）
+        for p in room.players.values():
+            p.status_effects.pop('extra_action', None)
 
         # 检查死亡玩家（持有不死图腾卡的玩家暂不死亡，由事件层发起濒死抉择）
         for pid, player in room.players.items():

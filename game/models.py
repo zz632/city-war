@@ -171,6 +171,7 @@ class GameState:
     round: int = 1
     phase: GamePhase = GamePhase.WAITING
     actions: Dict[str, Dict] = field(default_factory=dict)
+    extra_actions: Dict[str, Dict] = field(default_factory=dict)  # 二般人卡的第二行动
     messages: List[Dict] = field(default_factory=list)
     auction: Optional[Dict] = None
     duel: Optional[Dict] = None
@@ -202,6 +203,7 @@ class GameState:
         """进入下一轮"""
         self.round += 1
         self.actions = {}
+        self.extra_actions = {}
         self.meeting_results = None
         self.phase = GamePhase.ACTION
     

@@ -219,7 +219,7 @@ SKILL_CARDS: Dict[str, Dict] = {
     "double_action": {
         "name": "二般人卡",
         "type": "special",
-        "description": "一轮可行动两次",
+        "description": "本轮可额外再行动一次（攻城/守城/打野/修城）",
         "effect": {"extra_action": True}
     },
     "lifesteal": {

@@ -470,6 +470,11 @@ def _register():
         if target_id and target_id in room.players:
             action_detail['target_name'] = room.players[target_id].name
 
+        # 二般人第二行动提示
+        is_extra = player_id in room.game_state.extra_actions
+        if is_extra:
+            action_detail['extra'] = True
+
         _emit('player_action_ready', {
             'player_id': player_id,
             'player_name': player.name,
@@ -486,10 +491,38 @@ def _register():
                 'to_player_id': target_id
             }, room=target_sid)
 
-        # 检查是否所有存活玩家都已提交
+        # 检查是否所有存活玩家都已提交（二般人玩家还需提交第二行动，暂不结算）
         alive = [p for p in room.players.values() if p.is_alive and not p.is_spectator]
-        if len(room.game_state.actions) >= len(alive):
+        pending_extra = any(
+            p.is_alive and not p.is_spectator
+            and p.status_effects.get('extra_action')
+            and p.id in room.game_state.actions
+            for p in room.players.values()
+        )
+        if len(room.game_state.actions) >= len(alive) and not pending_extra:
             _process_round(room_id)
+        elif pending_extra and len(room.game_state.actions) >= len(alive):
+            # 所有人主行动已交齐，仅剩二般人玩家的第二行动：30秒后自动跳过，防止卡死
+            pending_ids = [p.id for p in room.players.values()
+                           if p.is_alive and not p.is_spectator
+                           and p.status_effects.get('extra_action')
+                           and p.id in room.game_state.actions]
+
+            def _force_extra(r_id, p_id):
+                r = room_manager.get_room(r_id)
+                if not r or not r.game_state:
+                    return
+                if r.game_state.phase != GamePhase.ACTION:
+                    return
+                pp = r.players.get(p_id)
+                if pp and pp.status_effects.get('extra_action') and p_id in r.game_state.actions:
+                    room_manager.submit_action(r_id, p_id, 'skip', None, 0)
+                    alive2 = [q for q in r.players.values() if q.is_alive and not q.is_spectator]
+                    if len(r.game_state.actions) >= len(alive2):
+                        _process_round(r_id)
+
+            for ep_id in pending_ids:
+                threading.Timer(30, _force_extra, args=(room_id, ep_id)).start()
 
     @socketio.on('auction_bid')
     def on_auction_bid(data):
@@ -1096,9 +1129,15 @@ def _apply_skill_card(room_id, player_id, skill_id, target_id=None, upgrade_targ
         'players': {pid: p.to_dict(is_spectator=False, is_self=(pid == player_id)) for pid, p in room.players.items()}
     }, room=room_id)
 
-    # 技能卡可能杀死玩家，检查是否所有存活玩家都已提交行动
+    # 技能卡可能杀死玩家，检查是否所有存活玩家都已提交行动（二般人待用则暂不结算）
     alive = [p for p in room.players.values() if p.is_alive and not p.is_spectator]
-    if len(room.game_state.actions) >= len(alive):
+    pending_extra = any(
+        p.is_alive and not p.is_spectator
+        and p.status_effects.get('extra_action')
+        and p.id in room.game_state.actions
+        for p in room.players.values()
+    )
+    if len(room.game_state.actions) >= len(alive) and not pending_extra:
         _process_round(room_id)
 
     return True, result_msg
@@ -1749,7 +1788,7 @@ def _trigger_ai_actions(room_id):
             target_id = decision.get('target_id')
             bet = decision.get('bet', 0) or 0
 
-            valid_actions = ['attack', 'defend', 'jungle', 'repair', 'alliance', 'dissolve_alliance', 'duel']
+            valid_actions = ['attack', 'defend', 'jungle', 'repair', 'alliance', 'dissolve_alliance', 'duel', 'skip']
             if action_type not in valid_actions:
                 action_type = 'defend'
             if action_type in ['repair', 'alliance', 'dissolve_alliance', 'duel'] and r.game_state.round < 3:
@@ -1777,8 +1816,32 @@ def _trigger_ai_actions(room_id):
                     'action_detail': action_detail
                 }, room=room_id)
 
+                # 二般人卡：AI 自动提交第二行动（攻击随机目标或打野）
+                p_now = r.players.get(pid)
+                if p_now and p_now.status_effects.get('extra_action') and pid in r.game_state.actions:
+                    alive_targets = [tid for tid, tp in r.players.items()
+                                     if tp.is_alive and not tp.is_spectator and tid != pid]
+                    if alive_targets and _random.random() < 0.7:
+                        extra_type, extra_target = 'attack', _random.choice(alive_targets)
+                    else:
+                        extra_type, extra_target = 'jungle', None
+                    ok2 = room_manager.submit_action(room_id, pid, extra_type, extra_target, 0)
+                    if ok2:
+                        _emit('player_action_ready', {
+                            'player_id': pid,
+                            'player_name': p_now.name,
+                            'action_type': extra_type,
+                            'action_detail': {'type': extra_type, 'target_id': extra_target, 'bet': 0, 'extra': True}
+                        }, room=room_id)
+
                 alive = [pp for pp in r.players.values() if pp.is_alive and not pp.is_spectator]
-                if len(r.game_state.actions) >= len(alive):
+                pending_extra = any(
+                    pp.is_alive and not pp.is_spectator
+                    and pp.status_effects.get('extra_action')
+                    and pp.id in r.game_state.actions
+                    for pp in r.players.values()
+                )
+                if len(r.game_state.actions) >= len(alive) and not pending_extra:
                     _process_round(room_id)
             return ok
 

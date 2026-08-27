@@ -773,7 +773,17 @@ def lobby(room_id):
 
 @app.route('/game/<room_id>')
 def game(room_id):
-    return render_template('game.html', room_id=room_id)
+    # 技能卡图鉴（帮助弹窗展示），按类型分组
+    from game.skills import SKILL_CARDS
+    type_order = ['attack', 'defense', 'resource', 'special']
+    skill_dict = {}
+    for sid, info in SKILL_CARDS.items():
+        skill_dict.setdefault(info.get('type', 'special'), []).append({
+            'name': info.get('name', sid),
+            'description': info.get('description', '')
+        })
+    skill_groups = [{'type': t, 'cards': skill_dict.get(t, [])} for t in type_order if skill_dict.get(t)]
+    return render_template('game.html', room_id=room_id, skill_groups=skill_groups)
 
 
 @app.route('/api/rooms', methods=['GET', 'POST'])
