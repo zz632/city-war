@@ -1716,6 +1716,62 @@ def _auto_ready_ai(room_id):
             _start_next_round(room_id)
 
 
+def _ai_emergency_skip(room_id, pid):
+    """AI 决策执行异常时的紧急兜底：提交跳过行动并做完成检查，防止回合卡死"""
+    try:
+        room = room_manager.get_room(room_id)
+        if not room or not room.game_state:
+            return
+        if room.game_state.phase != GamePhase.ACTION:
+            return
+        p = room.players.get(pid)
+        if not p or not p.is_alive:
+            return
+        if pid not in room.game_state.actions:
+            if not room_manager.submit_action(room_id, pid, 'skip', None, 0):
+                return
+            _emit('player_action_ready', {
+                'player_id': pid,
+                'player_name': p.name,
+                'action_type': 'skip',
+                'action_detail': {'type': 'skip', 'target_id': None, 'bet': 0, 'error_fallback': True}
+            }, room=room_id)
+        # 清除残留的额外行动状态，避免 pending_extra 卡死回合
+        if p.status_effects.get('extra_action'):
+            p.status_effects.pop('extra_action', None)
+        alive = [pp for pp in room.players.values() if pp.is_alive and not pp.is_spectator]
+        pending_extra = any(
+            pp.is_alive and not pp.is_spectator
+            and pp.status_effects.get('extra_action')
+            and pp.id in room.game_state.actions
+            for pp in room.players.values()
+        )
+        if len(room.game_state.actions) >= len(alive) and not pending_extra:
+            _process_round(room_id)
+    except Exception as e:
+        print(f'[AI] emergency_skip 异常: {e}')
+
+
+def _ai_exec_safely(room_id, pid, decision, r, p, apply_fn):
+    """安全执行AI决策：捕获异常，异常时通知房间并紧急跳过，防止静默卡死"""
+    try:
+        apply_fn(pid, decision, r, p)
+    except Exception as e:
+        import traceback
+        print(f'[AI] {p.name} 决策执行异常: {e}')
+        traceback.print_exc()
+        try:
+            _emit('ai_api_error', {
+                'ai_name': p.name,
+                'error': f'AI 决策执行异常: {type(e).__name__}: {e}',
+                'raw_content': '',
+                'raw_response': ''
+            }, room=room_id)
+        except Exception:
+            pass
+        _ai_emergency_skip(room_id, pid)
+
+
 def _trigger_ai_actions(room_id):
     """触发AI玩家的自动行动"""
     import random as _random
@@ -1801,6 +1857,25 @@ def _trigger_ai_actions(room_id):
 
             ok = room_manager.submit_action(room_id, pid, action_type, target_id, bet)
             print(f'[AI] {p.name} submit_action({action_type}, target={target_id}) => ok={ok}')
+            if not ok:
+                # 行动被规则拒绝（连续5次上限/联盟限制/赌注非法/攻击盟友等）：
+                # 降级为守城，再降级为跳过，防止AI静默卡死回合
+                action_type, target_id, bet = 'defend', None, 0
+                ok = room_manager.submit_action(room_id, pid, action_type, target_id, bet)
+                print(f'[AI] {p.name} 主行动被拒，降级 defend => ok={ok}')
+            if not ok:
+                action_type, target_id, bet = 'skip', None, 0
+                ok = room_manager.submit_action(room_id, pid, action_type, target_id, bet)
+                print(f'[AI] {p.name} 主行动被拒，降级 skip => ok={ok}')
+            if not ok:
+                p = r.players.get(pid)
+                _emit('ai_api_error', {
+                    'ai_name': p.name if p else pid,
+                    'error': 'AI 行动提交失败（所有降级行动均被拒绝）',
+                    'raw_content': '',
+                    'raw_response': ''
+                }, room=room_id)
+                return False
             if ok:
                 action_detail = {
                     'type': action_type,
@@ -1826,6 +1901,11 @@ def _trigger_ai_actions(room_id):
                     else:
                         extra_type, extra_target = 'jungle', None
                     ok2 = room_manager.submit_action(room_id, pid, extra_type, extra_target, 0)
+                    if not ok2:
+                        # 第二行动被拒：降级为跳过
+                        extra_type, extra_target = 'skip', None
+                        ok2 = room_manager.submit_action(room_id, pid, extra_type, extra_target, 0)
+                        print(f'[AI] {p_now.name} 第二行动被拒，降级 skip => ok={ok2}')
                     if ok2:
                         _emit('player_action_ready', {
                             'player_id': pid,
@@ -1833,6 +1913,13 @@ def _trigger_ai_actions(room_id):
                             'action_type': extra_type,
                             'action_detail': {'type': extra_type, 'target_id': extra_target, 'bet': 0, 'extra': True}
                         }, room=room_id)
+                    else:
+                        # 仍被拒绝：放弃第二行动并清除 extra_action 状态，
+                        # 否则 pending_extra 永远为 True，回合永不结算（AI路径无30秒强制跳过保护）
+                        p_now = r.players.get(pid)
+                        if p_now:
+                            p_now.status_effects.pop('extra_action', None)
+                        print(f'[AI] {p.name} 放弃第二行动（已清除 extra_action 状态防止卡死）')
 
                 alive = [pp for pp in r.players.values() if pp.is_alive and not pp.is_spectator]
                 pending_extra = any(
@@ -1852,7 +1939,7 @@ def _trigger_ai_actions(room_id):
             if r and r.game_state and r.game_state.phase == GamePhase.ACTION:
                 p = r.players.get(pid)
                 if p and p.is_alive:
-                    _apply_ai_decision(pid, cached, r, p)
+                    _ai_exec_safely(room_id, pid, cached, r, p, _apply_ai_decision)
         else:
             # 无缓存：检查是否有预请求正在进行
             prefetch_pending = getattr(room.game_state, '_ai_prefetch_pending', 0)
@@ -1871,7 +1958,7 @@ def _trigger_ai_actions(room_id):
                     cached_now = p.status_effects.pop('_ai_cached_decision', None)
                     if cached_now:
                         print(f'[AI] {p.name} 等到缓存决策: {cached_now}')
-                        _apply_ai_decision(pid, cached_now, r, p)
+                        _ai_exec_safely(room_id, pid, cached_now, r, p, _apply_ai_decision)
                     elif attempt < 6:
                         # 预请求还在进行中，500ms后重试（最多等3秒）
                         print(f'[AI] {p.name} 等待预请求缓存... (attempt={attempt+1})')
@@ -1881,11 +1968,17 @@ def _trigger_ai_actions(room_id):
                         config = p.status_effects.get('ai_config', {})
                         if not config.get('api_key'):
                             print(f'[AI] {p.name} 无API配置，跳过')
+                            _emit('ai_api_error', {
+                                'ai_name': p.name,
+                                'error': 'AI 未配置 API Key，无法行动（请在设置中配置 AI）',
+                                'raw_content': '',
+                                'raw_response': ''
+                            }, room=room_id)
                             return
                         print(f'[AI] {p.name} 预请求超时，fallback直接请求')
                         decision = ai_decide(r, pid, config)
                         print(f'[AI] {p.name} 决策完成: {decision}')
-                        _apply_ai_decision(pid, decision, r, p)
+                        _ai_exec_safely(room_id, pid, decision, r, p, _apply_ai_decision)
 
                 _wait_for_cache()
             else:
@@ -1903,11 +1996,17 @@ def _trigger_ai_actions(room_id):
                             return
                         decision = ai_decide(r, pid, config)
                         print(f'[AI] {p.name} 决策完成: {decision}')
-                        _apply_ai_decision(pid, decision, r, p)
+                        _ai_exec_safely(room_id, pid, decision, r, p, _apply_ai_decision)
 
                     threading.Timer(0.3, _direct_request).start()
                 else:
                     print(f'[AI] {ai_player.name} 无API配置，跳过')
+                    _emit('ai_api_error', {
+                        'ai_name': ai_player.name,
+                        'error': 'AI 未配置 API Key，无法行动（请在设置中配置 AI）',
+                        'raw_content': '',
+                        'raw_response': ''
+                    }, room=room_id)
 
 
 def _auto_duel_shot(room_id):
