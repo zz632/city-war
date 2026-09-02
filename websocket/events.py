@@ -432,6 +432,18 @@ def _register():
         ws_player_map[request.sid] = player_id
         _emit('game_state', _build_game_state(room))
 
+        # 服务重启恢复后：濒死抉择弹窗补发给重连的玩家
+        gs = room.game_state
+        if gs and getattr(gs, 'pending_totem', None) and player_id in gs.pending_totem:
+            p = room.players.get(player_id)
+            if p:
+                _emit('death_choice', {
+                    'player_id': player_id,
+                    'player_name': p.name,
+                    'cities': p.cities,
+                    'timeout': _TOTEM_TIMEOUT,
+                }, room=player_id)
+
         # 游戏进行中且为行动阶段时，触发AI自动行动
         if room.game_state and room.game_state.phase == GamePhase.ACTION:
             print(f'[AI] game_join triggers ai_actions, room={room_id}')
@@ -712,6 +724,33 @@ def _register():
                 _start_auction(room_id)
             else:
                 _start_next_round(room_id)
+
+    # ===== 服务重启后恢复房间：重新武装定时器 =====
+    # 房间数据由 RoomManager 从 MongoDB 恢复，这里补上随进程丢失的定时任务
+    for _room in list(room_manager.rooms.values()):
+        _gs = _room.game_state
+        if not _gs:
+            continue
+        try:
+            if _gs.phase == GamePhase.ACTION:
+                # 行动阶段：AI 未提交的行动重新触发（真人等重连后自行提交）
+                _trigger_ai_actions(_room.id)
+            elif _gs.phase == GamePhase.AUCTION and _gs.auction:
+                # 拍卖进行中：重新武装30秒截止定时器
+                threading.Timer(30.0, _end_auction, args=(_room.id,)).start()
+            elif _gs.phase == GamePhase.DUEL and _gs.duel:
+                # 约战进行中：轮到AI时自动开枪，真人等其操作
+                _auto_duel_shot(_room.id)
+            if getattr(_gs, 'pending_totem', None):
+                # 有濒死抉择未完成：重新武装超时定时器（弹窗在玩家重连时由 game_join 补发）
+                for _pid in list(_gs.pending_totem):
+                    def _totem_timeout(rid=_room.id, pid=_pid):
+                        r = room_manager.get_room(rid)
+                        if r and r.game_state and pid in getattr(r.game_state, 'pending_totem', []):
+                            _resolve_totem_choice(rid, pid, False, timeout=True)
+                    threading.Timer(_TOTEM_TIMEOUT, _totem_timeout).start()
+        except Exception as e:
+            print(f'[Persistence] 恢复房间 {_room.id} 定时器失败: {e}')
 
 
 # ===== 技能卡公共逻辑 =====

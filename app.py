@@ -18,7 +18,7 @@ import bcrypt
 import pymongo
 from cryptography.fernet import Fernet
 import base64
-from flask import Flask, render_template, request, jsonify, make_response, redirect, url_for
+from flask import Flask, render_template, request, jsonify, make_response, redirect, url_for, send_file
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
 app = Flask(__name__)
@@ -32,6 +32,7 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode=_async_mode, ping_
 
 from game.manager import RoomManager
 from game.models import Player, Room, GameState
+from game import persistence as game_persistence
 from websocket.events import init_socket_events
 
 room_manager = RoomManager()
@@ -193,6 +194,12 @@ def _decrypt_api_key(encrypted):
 # 初始化 MongoDB 并加载用户数据
 _init_mongodb()
 _load_users()
+
+# 恢复持久化的登录会话（服务重启后自动登录；跳过游客与已删除用户）
+for _tok, _uname in game_persistence.load_sessions().items():
+    _u = users.get(_uname)
+    if _u and not _u.get('is_guest'):
+        sessions[_tok] = _uname
 
 # ===== 管理员配置 =====
 ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'zz632')
@@ -363,6 +370,7 @@ def api_register():
     # 自动登录
     token = uuid.uuid4().hex
     sessions[token] = username
+    game_persistence.save_session(token, username)
     return jsonify({'success': True, 'token': token, 'username': username, 'display_name': display_name})
 
 
@@ -390,6 +398,7 @@ def api_login():
 
     token = uuid.uuid4().hex
     sessions[token] = username
+    game_persistence.save_session(token, username)
     return jsonify({'success': True, 'token': token, 'username': username, 'display_name': user['display_name']})
 
 
@@ -550,6 +559,7 @@ def _oauth_login_or_register(provider, oauth_id, display_name, email, redirect_t
             # 已绑定，直接登录
             token = uuid.uuid4().hex
             sessions[token] = uname
+            game_persistence.save_session(token, uname)
             resp = make_response(redirect(redirect_to))
             resp.set_cookie('auth_token', token, httponly=True, max_age=86400 * 30)
             return resp
@@ -572,9 +582,22 @@ def _oauth_login_or_register(provider, oauth_id, display_name, email, redirect_t
 
     token = uuid.uuid4().hex
     sessions[token] = username
+    game_persistence.save_session(token, username)
     resp = make_response(redirect(redirect_to))
     resp.set_cookie('auth_token', token, httponly=True, max_age=86400 * 30)
     return resp
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def api_logout():
+    """退出登录：同时清除服务器会话与持久化会话"""
+    token = request.headers.get('Authorization', '').replace('Bearer ', '')
+    if not token:
+        token = request.args.get('token', '')
+    if token and token in sessions:
+        del sessions[token]
+        game_persistence.delete_session(token)
+    return jsonify({'success': True})
 
 
 @app.route('/api/auth/oauth_providers', methods=['GET'])
@@ -945,6 +968,7 @@ def admin_delete_user(username):
     tokens_to_remove = [t for t, u in sessions.items() if u == username]
     for t in tokens_to_remove:
         del sessions[t]
+    game_persistence.delete_user_sessions(username)
     del users[username]
     _mongo_delete_user(username)
     _save_users()
@@ -960,6 +984,13 @@ def admin_delete_room(room_id):
     # 直接从 room_manager.rooms 中删除
     del room_manager.rooms[room_id]
     return jsonify({'success': True, 'message': f'房间 {room_id} 已删除'})
+
+
+@app.route('/sw.js')
+def service_worker():
+    """Service Worker 必须从根路径提供才能控制全站页面"""
+    return send_file(os.path.join(app.static_folder, 'sw.js'),
+                     mimetype='application/javascript', max_age=0)
 
 
 @app.errorhandler(404)

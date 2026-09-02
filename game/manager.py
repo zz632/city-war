@@ -27,6 +27,40 @@ class RoomManager:
     def __init__(self):
         self.rooms: Dict[str, Room] = {}
         self.players: Dict[str, Player] = {}
+        self._restore_and_start_flush()
+
+    def _restore_and_start_flush(self):
+        """从 MongoDB 恢复房间，并启动后台定期保存（无持久化环境时为空操作）"""
+        import threading
+        from . import persistence
+        restored = persistence.load_rooms()
+        self.rooms.update(restored)
+        for room in restored.values():
+            for p in room.players.values():
+                self.players[p.id] = p
+        if restored:
+            print(f'[RoomManager] 房间恢复完成，共 {len(restored)} 个')
+        if persistence.available():
+            t = threading.Thread(target=self._flush_loop, daemon=True)
+            t.start()
+
+    def _flush_loop(self):
+        """每3秒将内存房间快照写入 MongoDB，并清理已关闭的房间"""
+        import time
+        from . import persistence
+        while True:
+            time.sleep(3)
+            try:
+                live_ids = []
+                for room in list(self.rooms.values()):
+                    # 已结束的房间不保存
+                    if room.game_state and room.game_state.phase == GamePhase.FINISHED:
+                        continue
+                    persistence.save_room(room)
+                    live_ids.append(room.id)
+                persistence.sync_room_ids(live_ids)
+            except Exception as e:
+                print(f'[Persistence] 定期保存异常: {e}')
     
     def create_room(self, player_name: str, player_sid: str, client_ip: str = '',
                      password: str = '', max_players: int = 8) -> tuple:

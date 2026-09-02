@@ -13,6 +13,13 @@ let authToken = localStorage.getItem('auth_token') || '';
 let isOnlineMode = false;
 let loggedInDisplayName = '';
 
+// PWA：注册 Service Worker（添加到主屏幕、全屏运行）
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
+    });
+}
+
 // 密码显示/隐藏切换
 function togglePw(inputId, btn) {
     const input = document.getElementById(inputId);
@@ -181,6 +188,38 @@ function showGameSection() {
         document.getElementById('local-name-field').style.display = 'block';
         document.getElementById('logged-in-info').style.display = 'none';
     }
+    checkRejoinLastGame();
+}
+
+// ===== 回到上次对局（服务重启/关浏览器后恢复）=====
+async function checkRejoinLastGame() {
+    const btn = document.getElementById('rejoinGameBtn');
+    const text = document.getElementById('rejoinGameText');
+    if (!btn || !text) return;
+    btn.style.display = 'none';
+    let last = null;
+    try {
+        last = JSON.parse(localStorage.getItem('citywar_last_game') || 'null');
+    } catch (e) {}
+    // 24小时内的对局才提示
+    if (!last || !last.room || !last.pid || Date.now() - (last.t || 0) > 24 * 3600 * 1000) return;
+    try {
+        const res = await fetch('/api/room/' + last.room + '/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        const players = data.room && data.room.players ? data.room.players : {};
+        if (!players[last.pid]) return;
+        const gs = data.room.game_state;
+        const inGame = gs && gs.phase && gs.phase !== 'waiting' && gs.phase !== 'finished';
+        const myName = (players[last.pid] && players[last.pid].name) || '';
+        text.textContent = inGame ? ('回到对局：' + (myName ? myName + ' · ' : '') + '房间 ' + last.room)
+                                  : ('回到大厅：房间 ' + last.room);
+        btn.style.display = 'flex';
+        btn.onclick = () => {
+            const base = inGame ? '/game/' : '/lobby/';
+            window.location.href = base + last.room + '?pid=' + last.pid + (authToken ? '&token=' + authToken : '');
+        };
+    } catch (e) {}
 }
 
 async function checkExistingLogin() {
@@ -292,6 +331,10 @@ async function doGuestLogin() {
 }
 
 function doLogout() {
+    // 通知服务器销毁会话（含持久化会话），之后再清本地
+    if (authToken) {
+        fetch('/api/auth/logout', { method: 'POST', headers: authHeaders() }).catch(() => {});
+    }
     authToken = '';
     loggedInDisplayName = '';
     localStorage.removeItem('auth_token');
@@ -768,6 +811,11 @@ function initGame() {
     }
 
     socket = io();
+
+    // 记录当前对局，服务重启/关浏览器后可从首页回到对局
+    try {
+        localStorage.setItem('citywar_last_game', JSON.stringify({ room: roomId, pid: myPlayerId, t: Date.now() }));
+    } catch (e) {}
 
     socket.on('connect', () => {
         socket.emit('game_join', { room_id: roomId, player_id: myPlayerId });

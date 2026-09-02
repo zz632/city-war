@@ -196,6 +196,9 @@ body {
 .btn-red { background: var(--red); color: #fff; box-shadow: 0 1px 3px rgba(255,59,48,.25); }
 .btn-red:hover { background: #E0342B; }
 
+.btn-gold { background: linear-gradient(135deg, #f5b942, #d97706); color: #fff; box-shadow: 0 2px 8px rgba(217,119,6,.35); }
+.btn-gold:hover { filter: brightness(.92); }
+
 .btn-block { width: 100%; }
 .btn-lg { padding: 14px 28px; font-size: 17px; border-radius: var(--radius); }
 
