@@ -2,8 +2,8 @@ name: Keep HF Space Alive
 
 on:
   schedule:
-    # 每20分钟ping一次，防止Space因无流量休眠（UTC时间）
-    - cron: '*/20 * * * *'
+    # 每2小时ping一次，防止Space因无流量休眠（UTC时间）；低频更稳妥，也省Actions配额
+    - cron: '0 */2 * * *'
   workflow_dispatch:  # 支持手动触发
 
 jobs:
