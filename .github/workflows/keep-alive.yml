@@ -1,0 +1,22 @@
+name: Keep HF Space Alive
+
+on:
+  schedule:
+    # 每20分钟ping一次，防止Space因无流量休眠（UTC时间）
+    - cron: '*/20 * * * *'
+  workflow_dispatch:  # 支持手动触发
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping HF Space
+        run: |
+          response=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 https://zz632-city-war.hf.space/)
+          echo "HTTP status: $response"
+          # 2xx/3xx 都算存活；休眠中的Space首次请求会触发唤醒，返回慢但通常仍为200
+          if [ "$response" -ge 200 ] && [ "$response" -lt 400 ]; then
+            echo "Space is alive"
+          else
+            echo "Space responded with $response (may be waking up)"
+          fi
