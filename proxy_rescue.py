@@ -8,7 +8,7 @@
   python3 proxy_rescue.py serve   # 测速→选最快节点→在10810起代理，写就绪文件后常驻
                                    # 就绪文件: /tmp/citywar_rescue.ready，内容 "OK http://127.0.0.1:10810"
                                    # 失败时写 "FAIL"，退出码2
-流程: 读v2rayN数据库节点 → 全部测试 → 全挂则直连更新订阅再测 → 最快节点常驻
+流程: 直连更新订阅解析最新节点（订阅拉取失败则回退v2rayN数据库节点）→ 全部测速 → 最快节点常驻
 """
 import base64
 import json
@@ -301,16 +301,15 @@ def main():
     if os.path.exists(READY_FILE):
         os.unlink(READY_FILE)
 
-    nodes = read_db_nodes()
-    print(f'[rescue] 从 v2rayN 数据库读取 {len(nodes)} 个节点', flush=True)
+    # 先直连更新订阅拿最新节点，再测速选最快
+    print('[rescue] 直连更新订阅（不走代理）...', flush=True)
+    nodes = fetch_subscription()
+    print(f'[rescue] 订阅解析到 {len(nodes)} 个节点', flush=True)
+    if not nodes:
+        print('[rescue] 订阅拉取失败，回退到 v2rayN 数据库节点', flush=True)
+        nodes = read_db_nodes()
+        print(f'[rescue] 从 v2rayN 数据库读取 {len(nodes)} 个节点', flush=True)
     results = speed_run(nodes)
-
-    if not results:
-        print('[rescue] 库内节点全挂，直连更新订阅...', flush=True)
-        fresh = fetch_subscription()
-        print(f'[rescue] 订阅解析到 {len(fresh)} 个节点', flush=True)
-        if fresh:
-            results = speed_run(fresh)
 
     if not results:
         print('[rescue] 所有节点均不可用（含订阅刷新），放弃', flush=True)
