@@ -18,7 +18,7 @@ import bcrypt
 import pymongo
 from cryptography.fernet import Fernet
 import base64
-from flask import Flask, render_template, request, jsonify, make_response, redirect, url_for, send_file
+from flask import Flask, render_template, request, jsonify, make_response, redirect, url_for, send_file, send_from_directory
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
 app = Flask(__name__)
@@ -787,6 +787,25 @@ def _error_html(code, title, desc):
 @app.route('/')
 def index():
     return render_template('index.html')
+
+
+# ── /news：青春快报·国庆特刊（临时展示用静态页） ──
+NEWS_DIR = os.path.join(app.static_folder, 'news')
+
+
+@app.route('/news')
+def news_index():
+    return redirect('/news/')
+
+
+@app.route('/news/')
+def news_home():
+    return send_from_directory(NEWS_DIR, 'index.html')
+
+
+@app.route('/news/<path:filename>')
+def news_page(filename):
+    return send_from_directory(NEWS_DIR, filename)
 
 
 @app.route('/lobby/<room_id>')
