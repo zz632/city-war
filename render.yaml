@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: citywar
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements-server.txt
+    startCommand: python server.py
+    envVars:
+      - key: ONLINE_MODE
+        value: "1"
+      - key: SECRET_KEY
+        generateValue: true

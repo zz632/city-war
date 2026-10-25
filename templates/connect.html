@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>城池战争 - 连接服务器</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    color: #e0e0e0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+}
+.container {
+    text-align: center;
+    padding: 40px;
+    width: 100%;
+    max-width: 420px;
+}
+h1 {
+    font-size: 28px;
+    margin-bottom: 8px;
+    background: linear-gradient(90deg, #e94560, #f5a623);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.subtitle {
+    color: #888;
+    margin-bottom: 32px;
+    font-size: 14px;
+}
+.field {
+    margin-bottom: 16px;
+    text-align: left;
+}
+.field label {
+    display: block;
+    font-size: 13px;
+    color: #aaa;
+    margin-bottom: 6px;
+}
+.field input {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid #333;
+    border-radius: 8px;
+    background: #0f0f23;
+    color: #e0e0e0;
+    font-size: 15px;
+    outline: none;
+    transition: border-color 0.2s;
+}
+.field input:focus {
+    border-color: #e94560;
+}
+.btn-row {
+    display: flex;
+    gap: 12px;
+    margin-top: 24px;
+}
+.btn {
+    flex: 1;
+    padding: 12px;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+.btn:hover { opacity: 0.85; }
+.btn-primary {
+    background: linear-gradient(90deg, #e94560, #c0392b);
+    color: #fff;
+}
+.btn-cancel {
+    background: #2a2a3e;
+    color: #aaa;
+}
+.error {
+    color: #e94560;
+    font-size: 13px;
+    margin-top: 12px;
+    display: none;
+}
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>城池战争</h1>
+    <p class="subtitle">CityWar - 连接服务器</p>
+    <div class="field">
+        <label>服务器地址</label>
+        <input type="text" id="host" value="localhost" placeholder="IP 或 localhost">
+    </div>
+    <div class="field">
+        <label>端口号</label>
+        <input type="text" id="port" value="5000" placeholder="5000">
+    </div>
+    <div class="btn-row">
+        <button class="btn btn-cancel" onclick="cancel()">取消</button>
+        <button class="btn btn-primary" onclick="connect()">连接</button>
+    </div>
+    <p class="error" id="error"></p>
+</div>
+<script>
+function connect() {
+    var host = document.getElementById('host').value.trim() || 'localhost';
+    var port = document.getElementById('port').value.trim() || '5000';
+    window.pywebview.api.connect(host, parseInt(port));
+}
+function cancel() {
+    window.pywebview.api.cancel();
+}
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') connect();
+    if (e.key === 'Escape') cancel();
+});
+</script>
+</body>
+</html>

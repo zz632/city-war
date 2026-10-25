@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>大厅 - 城池战争</title>
+    <link rel="stylesheet" href="/static/css/main.css?v=15">
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png?v=2">
+    <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png?v=2">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="城池战争">
+</head>
+<body data-page="lobby">
+    <div class="page-wrap">
+        <!-- 房间号 -->
+        <div class="lobby-room-id" id="lobbyRoomId" data-roomid="{{ room_id }}">{{ room_id }}</div>
+        <div class="lobby-room-label">房间号 · 分享给好友加入</div>
+
+        <!-- 玩家列表 -->
+        <div class="card">
+            <div class="section-title">
+                <svg style="width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;vertical-align:-2px" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+                玩家列表
+            </div>
+            <ul class="player-list" id="playerList">
+                <li class="player-item">
+                    <span style="color:var(--text-dim)">等待玩家加入...</span>
+                </li>
+            </ul>
+            <button id="addAiBtn" class="btn btn-secondary" style="width:100%;margin-top:8px;display:none">
+                <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;vertical-align:-3px"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+                <span>添加人机</span>
+            </button>
+        </div>
+
+        <!-- 观战席 -->
+        <div class="card">
+            <div class="section-title">
+                <svg style="width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;vertical-align:-2px" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                观战席
+            </div>
+            <ul class="player-list" id="spectatorList">
+                <li class="player-item">
+                    <span style="color:var(--text-dim)">暂无观战者</span>
+                </li>
+            </ul>
+            <button id="spectateBtn" class="btn btn-secondary" style="width:100%;margin-top:8px;display:none">
+                <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;vertical-align:-3px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                <span>加入观战</span>
+            </button>
+            <button id="unspectateBtn" class="btn btn-secondary" style="width:100%;margin-top:8px;display:none">
+                <span>退出观战</span>
+            </button>
+        </div>
+
+        <!-- 聊天 -->
+        <div class="card" style="display:flex;flex-direction:column;min-height:160px">
+            <div class="section-title">聊天</div>
+            <div class="chat-messages" id="chatMessages"></div>
+            <div class="chat-bar">
+                <input type="text" id="chatInput" class="field-input" placeholder="说点什么..." autocomplete="off">
+                <button id="chatSend" class="btn btn-primary">发送</button>
+            </div>
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="lobby-footer" style="flex-direction:column">
+            <button id="roomSettingsBtn" class="btn btn-secondary btn-lg" style="width:100%;display:none">
+                <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;vertical-align:-3px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.45l.05.07a1.65 1.65 0 01-1.17 2.35 1.65 1.65 0 00-1.45.33l-.07.05a1.65 1.65 0 01-2.35-1.17 1.65 1.65 0 00-.33-1.45l-.05-.07a1.65 1.65 0 011.17-2.35 1.65 1.65 0 001.45-.33l.07-.05a1.65 1.65 0 012.35 1.17z"/></svg>
+                <span>房间设置</span>
+            </button>
+            <button id="startBtn" class="btn btn-green btn-lg" style="width:100%;display:none">
+                <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                <span>开始游戏</span>
+            </button>
+            <button id="urgeBtn" class="btn btn-secondary btn-lg" style="width:100%;display:none">
+                <svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>
+                <span>催促房主开始</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- 房间设置弹窗 -->
+    <div id="roomSettingsModal" style="display:none;position:fixed;inset:0;z-index:100;background:rgba(0,0,0,0.5);backdrop-filter:blur(4px)">
+        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(420px,90vw);max-height:85vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+                <h3 style="margin:0;font-size:18px">房间设置</h3>
+                <button onclick="closeRoomSettings()" style="background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer;padding:4px 8px">&times;</button>
+            </div>
+
+            <!-- 房间密码 -->
+            <div style="margin-bottom:16px">
+                <label style="font-size:13px;color:var(--text-dim);display:block;margin-bottom:6px">房间密码</label>
+                <div style="display:flex;gap:8px">
+                    <input type="text" id="roomPasswordInput" class="field-input" placeholder="留空则无密码" style="flex:1" maxlength="20" autocomplete="off">
+                    <button id="savePasswordBtn" class="btn btn-primary" style="padding:6px 16px;font-size:13px">保存</button>
+                </div>
+            </div>
+
+            <!-- 人数限制 -->
+            <div style="margin-bottom:16px">
+                <label style="font-size:13px;color:var(--text-dim);display:block;margin-bottom:6px">人数上限</label>
+                <div style="display:flex;gap:8px;align-items:center">
+                    <input type="number" id="roomMaxPlayersInput" class="field-input" style="width:80px;text-align:center" min="2" max="8" value="8">
+                    <span style="font-size:13px;color:var(--text-dim)">人（2~8）</span>
+                    <button id="saveMaxPlayersBtn" class="btn btn-primary" style="padding:6px 16px;font-size:13px;margin-left:auto">保存</button>
+                </div>
+            </div>
+
+            <!-- 允许中途加入 -->
+            <div style="margin-bottom:20px">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px">
+                    <input type="checkbox" id="allowJoinToggle" style="width:16px;height:16px;accent-color:var(--gold)">
+                    允许中途加入（游戏开始后新玩家以正常身份加入）
+                </label>
+            </div>
+
+            <div style="border-top:1px solid var(--border);margin:16px 0"></div>
+
+            <!-- 转讓房主 -->
+            <div style="margin-bottom:16px">
+                <label style="font-size:13px;color:var(--text-dim);display:block;margin-bottom:6px">转让房主</label>
+                <div style="display:flex;gap:8px;align-items:center">
+                    <select id="transferHostSelect" class="field-input" style="flex:1"></select>
+                    <button id="transferHostBtn" class="btn btn-secondary" style="padding:6px 16px;font-size:13px">转让</button>
+                </div>
+            </div>
+
+            <!-- 踢人 -->
+            <div style="margin-bottom:8px">
+                <label style="font-size:13px;color:var(--text-dim);display:block;margin-bottom:6px">踢出玩家</label>
+                <div style="display:flex;gap:8px;align-items:center">
+                    <select id="kickPlayerSelect" class="field-input" style="flex:1"></select>
+                    <button id="kickPlayerBtn" class="btn btn-outline" style="padding:6px 16px;font-size:13px;color:var(--red);border-color:var(--red)">踢出</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 内置确认弹窗 -->
+    <div id="confirmModal" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(0,0,0,0.5);backdrop-filter:blur(4px)">
+        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(340px,85vw);background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+            <div id="confirmMessage" style="font-size:15px;line-height:1.5;margin-bottom:20px;text-align:center"></div>
+            <div style="display:flex;gap:10px;justify-content:center">
+                <button id="confirmCancel" class="btn btn-secondary" style="flex:1;padding:10px 0">取消</button>
+                <button id="confirmOk" class="btn btn-green" style="flex:1;padding:10px 0">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+    <script src="/static/js/socket.io.min.js"></script>
+    <script src="/static/js/settings.js?v=17"></script>
+    <script src="/static/js/main.js?v=8"></script>
+</body>
+</html>

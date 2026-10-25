@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>游戏 - 城池战争</title>
+    <link rel="stylesheet" href="/static/css/main.css?v=16">
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png?v=2">
+    <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png?v=2">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="城池战争">
+</head>
+<body data-page="game">
+    <div class="game-wrap" id="gameRoomId" data-roomid="{{ room_id }}">
+        <!-- 顶栏：帮助 / 房间号 / 设置 -->
+        <div class="game-topbar">
+            <button id="helpBtn" class="topbar-icon-btn" title="帮助">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            </button>
+            <div class="game-topbar-room" title="房间号"><span class="room-label">房间</span><span id="topRoomId"></span></div>
+            <div data-settings-slot></div>
+        </div>
+
+        <!-- 顶部状态 -->
+        <div class="game-top">
+            <div class="stat-box">
+                <div class="stat-val" id="statRound">1</div>
+                <div class="stat-lbl">回合</div>
+            </div>
+            <div class="stat-box" id="statMultBox" style="display:none">
+                <div class="stat-val" id="statMult" style="color:var(--red)">×2</div>
+                <div class="stat-lbl">倍率</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-val" id="statCities">100</div>
+                <div class="stat-lbl">城池</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-val" id="statCards">0</div>
+                <div class="stat-lbl">技能卡</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-val" id="statPhase">行动</div>
+                <div class="stat-lbl">阶段</div>
+            </div>
+        </div>
+
+        <!-- 主体 -->
+        <div class="game-body">
+            <!-- 左侧：玩家 + 操作 -->
+            <div class="game-left">
+                <div class="section-title" style="margin-bottom:10px">场上玩家</div>
+                <div class="player-grid" id="playerGrid"></div>
+
+                <!-- 观战席 -->
+                <div id="spectatorArea" style="display:none;margin-top:10px">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                        <div class="section-title" style="margin-bottom:0">观战席</div>
+                        <div style="font-size:12px;color:var(--text-dim)">房间号 <span id="specRoomId" style="color:var(--primary);font-weight:700;font-size:14px"></span></div>
+                    </div>
+                    <div id="spectatorList" style="font-size:13px;color:var(--text-dim);line-height:1.8"></div>
+                </div>
+
+                <!-- 上帝视角面板（仅观战者可见） -->
+                <div class="god-view" id="godViewPanel" style="display:none;margin-top:10px">
+                    <div class="gv-header">
+                        <span class="gv-title">上帝视角</span>
+                        <button class="gv-toggle-btn" id="gvToggleBtn" onclick="toggleGodView()">展开</button>
+                    </div>
+                    <div class="gv-body" id="godViewContent"></div>
+                </div>
+
+                <!-- 操作面板 -->
+                <div class="action-panel" style="margin-top:16px" id="actionPanel">
+                    <div class="section-title" style="margin-bottom:10px" id="actionPanelTitle">选择行动</div>
+                    <div class="action-grid" id="actionGrid">
+                        <button class="act-btn" data-action="attack">
+                            <svg viewBox="0 0 24 24"><path d="M14.5 17.5L3 6V3h3l11.5 11.5M13 19l6-6M16 16l4 4M8 8l-4-4"/></svg>
+                            攻城
+                        </button>
+                        <button class="act-btn" data-action="defend">
+                            <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                            守城
+                        </button>
+                        <button class="act-btn" data-action="jungle">
+                            <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zM8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>
+                            打野
+                        </button>
+                        <button class="act-btn" data-action="duel">
+                            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="1"/></svg>
+                            约战
+                        </button>
+                        <button class="act-btn" data-action="skip">
+                            <svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                            跳过
+                        </button>
+                    </div>
+                    <!-- 后期操作（默认隐藏） -->
+                    <div id="lateActions" style="display:none;margin-top:8px">
+                        <div class="action-grid">
+                            <button class="act-btn" data-action="repair">
+                                <svg viewBox="0 0 24 24"><path d="M12 2v10l4.5 4.5M12 22a10 10 0 010-20 10 10 0 010 20z"/></svg>
+                                修城
+                            </button>
+                            <button class="act-btn" data-action="alliance">
+                                <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 108 0 4 4 0 00-8 0zm12 14v-2a4 4 0 00-3-3.87"/></svg>
+                                结盟
+                            </button>
+                        </div>
+                    </div>
+                    <!-- 猜拳已移除：打野现在为50%概率自动判定 -->
+                    <!-- 提示/已提交状态 -->
+                    <div id="actionHint" style="display:none;margin-top:10px;text-align:center;font-size:13px;color:var(--text-dim);padding:8px;background:var(--bg-input);border-radius:6px"></div>
+                </div>
+
+                <!-- 濒死抉择面板（默认隐藏，仅濒死玩家可见） -->
+                <div class="action-panel" style="margin-top:16px;display:none;border-color:#ef4444" id="deathChoicePanel">
+                    <div class="section-title" style="margin-bottom:10px;color:#ef4444">濒死抉择</div>
+                    <div id="deathChoiceInfo" style="text-align:center;font-size:15px;line-height:1.8;color:var(--text-dim);margin-bottom:12px"></div>
+                    <div style="display:flex;gap:8px;justify-content:center">
+                        <button class="btn btn-primary" style="padding:8px 20px" onclick="submitDeathChoice(true)">使用不死图腾</button>
+                        <button class="btn btn-danger" style="padding:8px 20px" onclick="submitDeathChoice(false)">放弃</button>
+                    </div>
+                    <div id="deathChoiceTimer" style="text-align:center;font-size:13px;color:var(--red);margin-top:10px"></div>
+                </div>
+
+                <!-- 约战面板（默认隐藏） -->
+                <div class="action-panel" style="margin-top:16px;display:none" id="duelPanel">
+                    <div class="section-title" style="margin-bottom:10px;color:#ef4444">约战 - 俄罗斯轮盘</div>
+                    <div id="duelInfo" style="font-size:14px;line-height:1.8;color:var(--text-dim);margin-bottom:12px"></div>
+                    <div id="duelChambers" style="display:flex;gap:6px;justify-content:center;margin-bottom:16px"></div>
+                    <div id="duelTurnInfo" style="text-align:center;font-size:15px;font-weight:600;margin-bottom:12px"></div>
+                    <div id="duelButtons" style="display:none;gap:8px;justify-content:center;align-items:center">
+                        <span style="font-size:14px;color:var(--text-dim)">开枪数：</span>
+                        <input type="number" id="duelShotsInput" class="field-input" style="width:70px;text-align:center;padding:6px 8px" min="1" max="6" value="1">
+                        <button class="btn btn-danger" style="padding:6px 16px" onclick="shootDuelFromInput()">开枪</button>
+                    </div>
+                    <div id="duelWaitInfo" style="display:none;text-align:center;font-size:14px;color:var(--text-dim);padding:16px">
+                        约战进行中，请等待...
+                    </div>
+                </div>
+
+                <!-- 会议面板（默认隐藏） -->
+                <div class="action-panel" style="margin-top:16px;display:none" id="meetingPanel">
+                    <div class="section-title" style="margin-bottom:10px">本轮小结</div>
+                    <div id="meetingMessages" style="font-size:14px;line-height:1.8;color:var(--text-dim);margin-bottom:16px"></div>
+                    <button class="btn btn-primary btn-block btn-lg" id="continueBtn">
+                        继续行动
+                    </button>
+                </div>
+
+                <!-- 拍卖面板（默认隐藏） -->
+                <div class="action-panel" style="margin-top:16px;display:none" id="auctionPanel">
+                    <div class="section-title" style="margin-bottom:10px">拍卖会</div>
+                    <div class="auction-card" id="auctionSkillCard">
+                        <div class="auction-skill-name" id="auctionSkillName"></div>
+                        <div class="auction-skill-desc" id="auctionSkillDesc"></div>
+                    </div>
+                    <div class="auction-info">
+                        <div class="auction-bid-row">
+                            <span>当前出价：<strong id="auctionCurrentBid">0</strong> 城</span>
+                            <span id="auctionHighestBidder" style="color:var(--primary);font-size:12px"></span>
+                        </div>
+                        <div class="auction-countdown" id="auctionCountdown">30s</div>
+                    </div>
+                    <div class="auction-bid-area" id="auctionBidArea">
+                        <input type="number" id="auctionBidInput" class="field-input" style="width:100px;text-align:center;padding:6px" min="0" value="">
+                        <button id="auctionBidBtn" class="btn btn-primary" style="padding:6px 16px;font-size:13px" onclick="submitAuctionBid()">出价</button>
+                        <button id="auctionPassBtn" class="btn btn-outline" style="padding:6px 16px;font-size:13px" onclick="onAuctionPass()">跳过</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：技能卡 + 聊天 -->
+            <div class="game-right">
+                <!-- 技能卡 -->
+                <div class="card" id="skillCardArea" style="display:none">
+                    <div class="section-title">技能卡</div>
+                    <div id="skillCards"></div>
+                    <!-- 自己的增益状态栏 -->
+                    <div id="buffBar" style="display:none;margin-top:10px;border-top:1px solid var(--border);padding-top:8px">
+                        <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px">增益状态</div>
+                        <div id="buffList" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+                    </div>
+                </div>
+
+                <!-- 聊天 -->
+                <div class="card" id="chatArea" style="display:flex;flex-direction:column">
+                    <div class="section-title">聊天</div>
+                    <div class="chat-messages" id="chatMessages"></div>
+                    <div class="chat-bar">
+                        <input type="text" id="chatInput" class="field-input" placeholder="消息..." autocomplete="off">
+                        <button id="chatSend" class="btn btn-primary chat-send-btn" title="发送" aria-label="发送">
+                            <svg viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 帮助弹窗 -->
+    <div id="helpModal" style="display:none;position:fixed;inset:0;z-index:150;background:rgba(0,0,0,0.5);backdrop-filter:blur(4px)">
+        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(520px,92vw);max-height:85vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface)">
+                <span style="font-size:17px;font-weight:700;color:var(--text)">怎么玩</span>
+                <button id="helpModalClose" style="background:none;border:none;cursor:pointer;padding:6px;border-radius:8px;color:var(--text-secondary);display:flex" title="关闭">
+                    <svg viewBox="0 0 24 24" style="width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="help-content">
+                <h4>核心目标</h4>
+                <p>每人起始 <strong>250</strong> 城池，城池归零即淘汰，坚持到最后即获胜。</p>
+
+                <h4>每轮行动（选一个）</h4>
+                <ul>
+                    <li><strong>攻城</strong>：选择目标，自己 +25×倍率，目标 −25×倍率。</li>
+                    <li><strong>守城</strong>：反弹伤害，攻击你的人 −20×倍率，自己 +20×倍率。</li>
+                    <li><strong>打野</strong>：50% 概率 +10×倍率城池，50% 概率获得技能卡。</li>
+                    <li><strong>约战</strong>：与对手轮盘对决，赌注下限 15×倍率；转轮共 10 发、前 3 发为空包弹；拒绝约战需交 50% 赌注作为贡奉。</li>
+                    <li><strong>跳过</strong>：本轮不行动，可用来打断连续操作计数或解除行动限制冲突。</li>
+                </ul>
+
+                <h4>第 3 轮解锁</h4>
+                <ul>
+                    <li><strong>修城</strong>：+30×倍率城池。</li>
+                    <li><strong>结盟</strong>：场上仅剩 2 人时禁止结盟；盟友间互相不受伤；奖励和伤害由盟友均分。</li>
+                </ul>
+
+                <h4>拍卖会</h4>
+                <p>第 <strong>10</strong> 轮开始，每 <strong>5</strong> 轮举办一次，竞拍技能卡。</p>
+
+                <h4>数值翻倍</h4>
+                <p>第 <strong>8 / 16 / 24</strong> 轮起，所有数值分别 <strong>×2 / ×4 / ×8</strong>。</p>
+
+                <h4>技能卡</h4>
+                <p>共 <strong>39</strong> 种，分为<strong>攻击 / 防御 / 资源 / 特殊</strong>四类。死亡后技能卡不再生效（全场影响类除外）。</p>
+
+                <h4>限制</h4>
+                <p>同一种操作连续执行不能超过 <strong>5</strong> 次。持不死图腾时濒死会自动询问是否使用，可恢复大量城池继续战斗。</p>
+
+                <h4 style="cursor:pointer" onclick="const el=document.getElementById('skillCodexBody');el.style.display=el.style.display==='none'?'block':'none'">技能卡图鉴（点击展开/收起）</h4>
+                <div id="skillCodexBody" style="display:none">
+                    {% for group in skill_groups %}
+                    <p style="margin:8px 0 4px;font-weight:600">{{ { 'attack': '攻击类', 'defense': '防御类', 'resource': '资源类', 'special': '特殊类' }[group.type] }}（{{ group.cards|length }} 张）</p>
+                    <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px">
+                        {% for card in group.cards %}
+                        <tr style="border-bottom:1px solid var(--border)">
+                            <td style="padding:4px 8px 4px 0;white-space:nowrap;font-weight:600">{{ card.name }}</td>
+                            <td style="padding:4px 0;color:var(--text-dim)">{{ card.description }}</td>
+                        </tr>
+                        {% endfor %}
+                    </table>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+    <script src="/static/js/socket.io.min.js"></script>
+    <script src="/static/js/settings.js?v=17"></script>
+    <script src="/static/js/main.js?v=12"></script>
+</body>
+</html>
