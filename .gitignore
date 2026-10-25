@@ -9,3 +9,6 @@ dist/
 .trae/
 .vscode/
 CHANGELOG.local.md
+
+# TRAE HTML 分享缓存（工具生成，勿提交）
+.trae-html-share-packages/
