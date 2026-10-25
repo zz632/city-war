@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>世界底图预览</title>
+<style>
+html,body{margin:0;height:100%;background:#efece3;overflow:hidden}
+#cv{display:block;cursor:grab;touch-action:none}
+#hud{position:fixed;top:12px;left:12px;background:rgba(250,249,244,.93);border:1px solid #b5b0a4;
+padding:7px 12px;font:13px/1.6 "Songti SC","STSong","SimSun",serif;color:#26241f;pointer-events:none;letter-spacing:.5px}
+#tip{position:fixed;display:none;background:rgba(32,30,26,.9);color:#f4f1e8;padding:6px 10px;
+font:13px/1.5 "Songti SC","STSong",serif;pointer-events:none;z-index:9;border-radius:2px;max-width:260px}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="hud">载入中…</div>
+<div id="tip"></div>
+<script>
+"use strict";
+const W=4096, PPR=W/(2*Math.PI);
+const YTOP=Math.log(Math.tan(Math.PI/4+(78*Math.PI/180)/2));
+const YBOT=Math.log(Math.tan(Math.PI/4+(-58*Math.PI/180)/2));
+const H=Math.round((YTOP-YBOT)*PPR);
+function X(lon){return (lon+180)*Math.PI/180*PPR}
+function Y(lat){const t=Math.max(-85,Math.min(85,lat));return (YTOP-Math.log(Math.tan(Math.PI/4+(t*Math.PI/180)/2)))*PPR}
+const PAL=["#e9e6de","#e3e8e0","#ebe4d9","#e0e6ea","#e9e1e7","#e5e9d7","#ede8dd","#dfe3dd"];
+const HOV="rgba(140,158,128,.55)";
+const cv=document.getElementById("cv"),ctx=cv.getContext("2d");
+const hud=document.getElementById("hud"),tip=document.getElementById("tip");
+const DPR=Math.min(2,window.devicePixelRatio||1);
+const yieldUI=()=>new Promise(r=>setTimeout(r,0));
+
+// ---------- 二进制数据（零解析直读） ----------
+// 布局: magic(8) + jsonLen(4) + json(元数据) + BOX(F32 nf*4) + FEATRING(I32 nf+1) + RINGOFF(I32 nring+1) + COORDS(F32 npts*2)
+let BOX,FR,ROFF,C,FR2,ROFF2,C2,FRr,ROFFr,Cr,nf=0;
+const GM=new Map();
+const CIDv=[];
+let DATAV="9a4e52e55ad89d975ef4843ce9b18094";  // 数据指纹，构建时注入；变化则自动重新下载
+function idbOpen(){
+  return new Promise((res,rej)=>{
+    const r=indexedDB.open("worldmap",1);
+    r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);
+    r.onblocked=()=>rej(new Error("数据库被占用"));
+    r.onupgradeneeded=()=>r.result.createObjectStore("data");
+  });
+}
+async function idbSave(buf){
+  try{
+    const db=await idbOpen();
+    const p=new Promise(res=>{const tx=db.transaction("data","readwrite").objectStore("data").put({h:DATAV,b:buf},"bin");tx.oncomplete=()=>res();tx.onerror=()=>res()});
+    await Promise.race([p,new Promise(r=>setTimeout(r,5000))]);
+  }catch(e){}
+}
+// 断点续传下载: 8MB分块+Range重试, 全失败自动换镜像, 防长连接被掐
+async function fetchResumable(path, mirrors){
+  const urls=[path].concat(mirrors||[]);
+  let total=0;
+  for(const u of urls){
+    try{
+      const h=await fetch(u,{method:"HEAD"});
+      const cl=+h.headers.get("content-length")||0;
+      if(cl>1000000){total=cl;break;}
+    }catch(e){}
+  }
+  if(!total){ // HEAD都失败, 退化为单次下载
+    for(const u of urls){
+      try{hud.textContent="下载数据…";await yieldUI();
+        const r=await fetch(u); if(!r.ok)continue;
+        return await r.arrayBuffer();
+      }catch(e){}
+    }
+    throw new Error("无法下载数据(所有来源)");
+  }
+  const CH=8*1024*1024, out=new Uint8Array(total);
+  let url=urls[0];
+  for(let s=0;s<total;s+=CH){
+    const e=Math.min(s+CH,total)-1;
+    let ok=false;
+    for(let a=0;a<urls.length*6&&!ok;a++){ // 每块最多重试(来源数×6)次
+      if(a&&a%urls.length===0){url=urls[(a/urls.length)%urls.length|0];}
+      try{
+        const st=performance.now();
+        const r=await fetch(url,{headers:{Range:"bytes="+s+"-"+e}});
+        if(!(r.status===206||r.status===200))throw new Error(r.status);
+        const b=new Uint8Array(await r.arrayBuffer());
+        if(r.status===200){ // 服务器不支持Range, 直接回了全量
+          if(s===0&&b.length===total)return b.buffer;
+          throw new Error("不支持续传");
+        }
+        if(b.length!==e-s+1)throw new Error("长度不符");
+        out.set(b,s);ok=true;
+      }catch(err){
+        hud.textContent="网络中断, 从断点继续… ("+(s/1048576|0)+"/"+(total/1048576|0)+"MB)";
+        await yieldUI();await new Promise(r=>setTimeout(r,800));
+      }
+    }
+    if(!ok)throw new Error("分块下载失败 @" + s);
+    hud.textContent="下载数据 "+((s+CH)/1048576|0)+"/"+(total/1048576|0)+"MB";await yieldUI();
+  }
+  return out.buffer;
+}
+
+async function loadData(){
+  let buf=null;
+  try{
+    const db=await idbOpen();
+    const got=await new Promise((res)=>{
+      const tx=db.transaction("data").objectStore("data").get("bin");
+      tx.onsuccess=()=>res(tx.result);tx.onerror=()=>res(null);
+    });
+    if(got&&got.h===DATAV)buf=got.b;
+  }catch(e){}
+  if(!buf){
+    buf=await fetchResumable("/static/map/map_world.bin",[]);
+    idbSave(buf);  // 后台写缓存，不阻塞出图
+  }
+  const dv=new DataView(buf);
+  const jl=dv.getUint32(8,true);
+  const meta=JSON.parse(new TextDecoder("utf-8").decode(new Uint8Array(buf,12,jl)));
+  let off=12+jl; while(off%4)off++;
+  nf=meta.nf;
+  BOX=new Float32Array(buf,off,nf*4); off+=nf*16;
+  FR=new Int32Array(buf,off,nf+1); off+=(nf+1)*4;
+  ROFF=new Int32Array(buf,off,meta.nring+1); off+=(meta.nring+1)*4;
+  C=new Float32Array(buf,off,meta.npts*2); off+=meta.npts*8;
+  FR2=new Int32Array(buf,off,nf+1); off+=(nf+1)*4;
+  ROFF2=new Int32Array(buf,off,meta.nring2+1); off+=(meta.nring2+1)*4;
+  C2=new Float32Array(buf,off,meta.npts2*2);
+  for(let i=0;i<nf;i++){
+    const p=meta.meta[i];
+    CIDv[i]=p.g;
+    let g=GM.get(p.g);
+    if(!g){g={name:p.gn,region:p.region,area:0,mem:[]};GM.set(p.g,g)}
+    g.area+=p.area||0;
+    g.mem.push(i);
+  }
+  for(const g of GM.values()){
+    let big=g.mem[0],ba=-1;
+    for(const i of g.mem){
+      const w=BOX[i*4+2]-BOX[i*4],h=BOX[i*4+3]-BOX[i*4+1];
+      if(w*h>ba){ba=w*h;big=i}
+    }
+    g.lbl={x:(BOX[big*4]+BOX[big*4+2])/2,y:(BOX[big*4+1]+BOX[big*4+3])/2,
+           w:Math.min(BOX[big*4+2]-BOX[big*4],BOX[big*4+3]-BOX[big*4+1])};
+  }
+}
+// ---------- 空间索引（2° 网格，供拾取与裁剪） ----------
+const CS=2,GRD=new Map(),BIG=[];
+function buildGrid(){
+  for(let i=0;i<nf;i++){
+    const a=BOX[i*4],b=BOX[i*4+1],e=BOX[i*4+2],d=BOX[i*4+3];
+    const x0=Math.floor((a/W*360+180)/CS),x1=Math.floor((e/W*360+180)/CS);
+    const y0=Math.floor((b/H*360+180)/CS),y1=Math.floor((d/H*360+180)/CS);
+    if((x1-x0+1)*(y1-y0+1)>48){BIG.push(i);continue}
+    for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++){
+      const k=x+":"+y;let arr=GRD.get(k);if(!arr){arr=[];GRD.set(k,arr)}arr.push(i);
+    }
+  }
+}
+function inPolys(px,py,i){
+  let inside=false;
+  for(let r=FR[i];r<FR[i+1];r++){
+    const s=ROFF[r]*2,t=ROFF[r+1]*2;let cnt=0;
+    let j=t-2;
+    for(let a=s;a<t;a+=2){
+      const xi=C[a],yi=C[a+1],xj=C[j],yj=C[j+1];
+      if((yi>py)!==(yj>py)&&px<(xj-xi)*(py-yi)/(yj-yi)+xi)cnt++;
+      j=a;
+    }
+    if(cnt&1)inside=!inside;
+  }
+  return inside;
+}
+function pick(lon,lat){
+  const px=X(lon),py=Y(lat);
+  const k=Math.floor((lon+180)/CS)+":"+Math.floor((lat+90)/CS);
+  const cand=(GRD.get(k)||[]).concat(BIG);
+  for(const i of cand){
+    if(px<BOX[i*4]||px>BOX[i*4+2]||py<BOX[i*4+1]||py>BOX[i*4+3])continue;
+    if(inPolys(px,py,i))return i;
+  }
+  return -1;
+}
+// ---------- 视图 ----------
+let scale=1,ox=0,oy=0,hovG=-1,pend=false;
+function fit(){
+  scale=Math.min(cv.width/DPR/W,cv.height/DPR/H)*0.98;
+  ox=(cv.width/DPR-W*scale)/2;oy=(cv.height/DPR-H*scale)/2;
+}
+function resize(){
+  cv.width=Math.round(innerWidth*DPR);cv.height=Math.round(innerHeight*DPR);
+  cv.style.width=innerWidth+"px";cv.style.height=innerHeight+"px";
+  fit();schedule();
+}
+function schedule(){if(!pend){pend=true;requestAnimationFrame(draw)}}
+function strokePoly(i){
+  ctx.beginPath();
+  for(let r=FRr[i];r<FRr[i+1];r++){
+    const s=ROFFr[r]*2,t=ROFFr[r+1]*2;
+    ctx.moveTo(Cr[s]*scale+ox,Cr[s+1]*scale+oy);
+    for(let a=s+2;a<t;a+=2)ctx.lineTo(Cr[a]*scale+ox,Cr[a+1]*scale+oy);
+    ctx.closePath();
+  }
+}
+function draw(){
+  pend=false;
+  const vw=cv.width/DPR,vh=cv.height/DPR;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.fillStyle="#efece3";ctx.fillRect(0,0,vw,vh);
+  const wx0=(0-ox)/scale,wx1=(vw-ox)/scale,wy0=(0-oy)/scale,wy1=(vh-oy)/scale;
+  const zoomed=(wx1-wx0)<W*0.15;   // 低缩放用 LOD 粗几何，放大用全量+网格裁剪
+  FRr=zoomed?FR:FR2;ROFFr=zoomed?ROFF:ROFF2;Cr=zoomed?C:C2;
+  let cand;
+  if(zoomed){
+    const gx0=Math.floor((wx0/W*360+180)/CS)-1,gx1=Math.floor((wx1/W*360+180)/CS)+1;
+    const gy0=Math.floor((wy0/H*360+180)/CS)-1,gy1=Math.floor((wy1/H*360+180)/CS)+1;
+    const seen=new Set();
+    for(let x=gx0;x<=gx1;x++)for(let y=gy0;y<=gy1;y++){
+      const arr=GRD.get(x+":"+y);if(arr)for(const i of arr)seen.add(i);
+    }
+    for(const i of BIG)seen.add(i);
+    cand=seen;
+  }else cand=null;
+  ctx.lineWidth=.6;ctx.strokeStyle="rgba(70,68,60,.35)";ctx.lineJoin="round";
+  const drawOne=i=>{
+    const a=BOX[i*4],b=BOX[i*4+1],e=BOX[i*4+2],d=BOX[i*4+3];
+    if(e<wx0||a>wx1||d<wy0||b>wy1)return;
+    const wpx=(e-a)*scale,hpx=(d-b)*scale;
+    if(wpx<.7&&hpx<.7)return;
+    strokePoly(i);
+    ctx.fillStyle=PAL[CIDv[i]%8];ctx.fill();
+    if(wpx>2||hpx>2)ctx.stroke();
+  };
+  if(cand){for(const i of cand)drawOne(i)}
+  else{for(let i=0;i<nf;i++)drawOne(i)}
+  if(hovG>=0){
+    const g=GM.get(hovG);
+    if(g){ctx.fillStyle=HOV;
+      for(const i of g.mem){strokePoly(i);ctx.fill()}}
+  }
+  drawScale(vw,vh);
+}
+// ---------- 比例尺（墨卡托：视口中心纬度换算） ----------
+const SCALE_STEPS=[5000,3000,2000,1000,500,300,200,100,50,30,20,10,5,2,1];
+function drawScale(vw,vh){
+  const wx=(vw/2-ox)/scale, wy=(vh/2-oy)/scale;
+  const ym=YTOP-wy/PPR;
+  const lat=(2*Math.atan(Math.exp(ym))-Math.PI/2)*180/Math.PI;
+  const kmPerPx=111.32*Math.cos(lat*Math.PI/180)/(PPR*Math.PI/180*scale);
+  let km=SCALE_STEPS[SCALE_STEPS.length-1];
+  for(const s of SCALE_STEPS){ if(s/kmPerPx<=140){km=s;break} }
+  const px=km/kmPerPx;
+  const x2=vw-30, x1=x2-px, y1=vh-22;
+  ctx.strokeStyle="#33302a"; ctx.lineWidth=1.2;
+  ctx.beginPath();
+  ctx.moveTo(x1,y1-5);ctx.lineTo(x1,y1);ctx.lineTo(x2,y1);ctx.lineTo(x2,y1-5);
+  ctx.stroke();
+  ctx.font="12px 'Songti SC','STSong','SimSun',serif";
+  ctx.textAlign="center";ctx.textBaseline="bottom";
+  const label=km.toLocaleString()+" km";
+  ctx.lineWidth=3;ctx.strokeStyle="rgba(250,248,242,.85)";
+  ctx.strokeText(label,(x1+x2)/2,y1-2);
+  ctx.fillStyle="#33302a";ctx.fillText(label,(x1+x2)/2,y1-2);
+}
+// ---------- 事件 ----------
+let drag=false,sx0=0,sy0=0;
+cv.addEventListener("mousedown",e=>{drag=true;sx0=e.clientX;sy0=e.clientY;cv.style.cursor="grabbing"});
+addEventListener("mouseup",()=>{drag=false;cv.style.cursor="grab"});
+cv.addEventListener("dblclick",()=>{fit();schedule()});
+cv.addEventListener("wheel",e=>{
+  e.preventDefault();
+  const f=e.deltaY<0?1.18:1/1.18;
+  const mx=e.clientX,my=e.clientY;
+  ox=mx-(mx-ox)*f;oy=my-(my-oy)*f;scale*=f;
+  schedule();
+},{passive:false});
+addEventListener("resize",resize);
+cv.addEventListener("mousemove",e=>{
+  if(drag){ox+=e.clientX-sx0;oy+=e.clientY-sy0;sx0=e.clientX;sy0=e.clientY;schedule();return}
+  const lon=(e.clientX-ox)/scale/W*360-180;
+  const my=(e.clientY-oy)/scale;
+  const ym=YTOP-my/PPR;
+  const lat=(2*Math.atan(Math.exp(ym))-Math.PI/2)*180/Math.PI;
+  const i=pick(lon,lat);
+  const g=i>=0?GM.get(CIDv[i]):null;
+  if(g){
+    if(CIDv[i]!==hovG){hovG=CIDv[i];schedule()}
+    tip.style.display="block";
+    tip.style.left=(e.clientX+14)+"px";tip.style.top=(e.clientY+14)+"px";
+    tip.innerHTML="<b>"+(g.name||"?")+"</b><br>"+(g.region||"")+" · ≈"+Math.round(g.area||0).toLocaleString()+" km²";
+  }else{
+    if(hovG!==-1){hovG=-1;schedule()}
+    tip.style.display="none";
+  }
+});
+cv.addEventListener("mouseleave",()=>{tip.style.display="none";if(hovG!==-1){hovG=-1;schedule()}});
+// ---------- 触屏：单指拖动 / 双指捏合 / 轻点拾取 ----------
+let tDrag=false,tX0=0,tY0=0,tMoved=false,tPinch=null,tT0=0;
+cv.addEventListener("touchstart",e=>{
+  e.preventDefault();
+  if(e.touches.length===1){
+    tDrag=true;tMoved=false;tT0=Date.now();
+    tX0=e.touches[0].clientX;tY0=e.touches[0].clientY;
+  }else if(e.touches.length===2){
+    tDrag=false;
+    const a=e.touches[0],b=e.touches[1];
+    tPinch={d:Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY),
+            mx:(a.clientX+b.clientX)/2,my:(a.clientY+b.clientY)/2};
+  }
+},{passive:false});
+cv.addEventListener("touchmove",e=>{
+  e.preventDefault();
+  if(tPinch&&e.touches.length===2){
+    const a=e.touches[0],b=e.touches[1];
+    const d=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+    const mx=(a.clientX+b.clientX)/2,my=(a.clientY+b.clientY)/2;
+    const f=d/tPinch.d;
+    ox=mx-(tPinch.mx-ox)*f;oy=my-(tPinch.my-oy)*f;scale*=f;
+    tPinch.d=d;tPinch.mx=mx;tPinch.my=my;
+    tMoved=true;schedule();
+  }else if(tDrag&&e.touches.length===1){
+    const x=e.touches[0].clientX,y=e.touches[0].clientY;
+    if(Math.abs(x-tX0)+Math.abs(y-tY0)>4)tMoved=true;
+    ox+=x-tX0;oy+=y-tY0;tX0=x;tY0=y;schedule();
+  }
+},{passive:false});
+cv.addEventListener("touchend",e=>{
+  e.preventDefault();
+  if(e.touches.length===0){
+    if(!tMoved&&Date.now()-tT0<350&&tDrag){
+      const x=e.changedTouches[0].clientX,y=e.changedTouches[0].clientY;
+      const lon=(x-ox)/scale/W*360-180;
+      const ym=YTOP-((y-oy)/scale)/PPR;
+      const lat=(2*Math.atan(Math.exp(ym))-Math.PI/2)*180/Math.PI;
+      const i=pick(lon,lat);
+      if(i>=0){
+        const g=GM.get(CIDv[i]);
+        hovG=CIDv[i];schedule();
+        tip.style.display="block";
+        tip.style.left=Math.min(x+14,innerWidth-270)+"px";
+        tip.style.top=Math.min(y+14,innerHeight-90)+"px";
+        tip.innerHTML="<b>"+(g.name||"?")+"</b><br>"+(g.region||"")+" · ≈"+Math.round(g.area||0).toLocaleString()+" km²";
+        setTimeout(()=>{tip.style.display="none";if(hovG!==-1){hovG=-1;schedule()}},3200);
+      }else{
+        tip.style.display="none";
+        if(hovG!==-1){hovG=-1;schedule()}
+      }
+    }
+    tDrag=false;tPinch=null;
+  }else if(e.touches.length===1){
+    tPinch=null;tDrag=true;tMoved=true;
+    tX0=e.touches[0].clientX;tY0=e.touches[0].clientY;
+  }
+},{passive:false});
+// ---------- 启动 ----------
+(async function(){
+  try{
+    hud.textContent="下载数据…";await yieldUI();
+    await loadData();
+    hud.textContent="建索引…";await yieldUI();
+    buildGrid();
+    resize();
+    hud.textContent="世界底图 · 版块 "+GM.size+" · 行政单元 "+nf+" · 拖动平移 / 滚轮缩放 / 双击复位";
+  }catch(err){
+    hud.textContent="加载失败: "+((err&&err.message)||err);
+  }
+})();
+</script>
+</body>
+</html>

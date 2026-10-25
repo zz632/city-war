@@ -908,3 +908,21 @@ body {
 .chat-send-btn svg { width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:2; }
 #chatArea { flex:1; }
 @media (max-width: 700px) { #chatArea { flex:none; } }
+
+/* 版本选择弹窗 */
+.version-option {
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+.version-option:hover {
+    border-color: var(--primary);
+    background: var(--primary-bg);
+}
+.version-option:last-child { margin-bottom: 0; }
+.vo-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.vo-name { font-size: 15px; font-weight: 600; color: var(--text); }
+.vo-desc { font-size: 13px; color: var(--text-secondary); }

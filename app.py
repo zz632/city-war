@@ -789,23 +789,10 @@ def index():
     return render_template('index.html')
 
 
-# ── /news：青春快报·国庆特刊（临时展示用静态页） ──
-NEWS_DIR = os.path.join(app.static_folder, 'news')
-
-
-@app.route('/news')
-def news_index():
-    return redirect('/news/')
-
-
-@app.route('/news/')
-def news_home():
-    return send_from_directory(NEWS_DIR, 'index.html')
-
-
-@app.route('/news/<path:filename>')
-def news_page(filename):
-    return send_from_directory(NEWS_DIR, filename)
+@app.route('/map')
+def map_page():
+    # 新版世界地图（开发中预览页，静态资源在 /static/map/）
+    return send_from_directory('static/map', 'index.html')
 
 
 @app.route('/lobby/<room_id>')

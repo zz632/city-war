@@ -162,7 +162,7 @@ function initHome() {
         if (code) {
             joinRoom(name, code);
         } else {
-            createRoom(name);
+            showVersionModal(name);
         }
     });
 
@@ -349,6 +349,42 @@ function oauthLogin(provider) {
 }
 
 // ===== 房间操作 =====
+
+// 创建房间：选择游戏版本（新版开发中，暂只能进旧版）
+function showVersionModal(name) {
+    if (document.getElementById('version-modal')) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'version-modal';
+    overlay.innerHTML = `
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>选择游戏版本</h3>
+                <button class="modal-close" onclick="document.getElementById('version-modal').remove()">×</button>
+            </div>
+            <div class="version-option" id="ver-new">
+                <div class="vo-head">
+                    <span class="vo-name">新版 · 世界地图</span>
+                    <span class="badge badge-gold">推荐</span>
+                    <span class="badge badge-gray">开发中</span>
+                </div>
+                <div class="vo-desc">以真实世界地图为版图的全新玩法，正在建设中</div>
+            </div>
+            <div class="version-option" id="ver-old">
+                <div class="vo-head"><span class="vo-name">旧版 · 经典模式</span></div>
+                <div class="vo-desc">当前完整的城池战争玩法</div>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.getElementById('ver-new').addEventListener('click', () => {
+        toast('新版开发中，敬请期待', 'info');
+    });
+    document.getElementById('ver-old').addEventListener('click', () => {
+        overlay.remove();
+        createRoom(name);
+    });
+}
 
 async function createRoom(name) {
     try {
