@@ -37,7 +37,8 @@ const yieldUI=()=>new Promise(r=>setTimeout(r,0));
 let BOX,FR,ROFF,C,FR2,ROFF2,C2,FRr,ROFFr,Cr,nf=0;
 const GM=new Map();
 const CIDv=[];
-let DATAV="9a4e52e55ad89d975ef4843ce9b18094";  // 数据指纹，构建时注入；变化则自动重新下载
+let DATAV="0b151c46a52757b6ea65c6bb99aeb3e5";  // 数据指纹（对应 gzip 压缩版）；变化则自动重新下载
+// 注: map_world.bin 现为 gzip 流（内容 magic 1f8b），下载后先解压再解析；兼容旧未压缩版(WMAP1)
 function idbOpen(){
   return new Promise((res,rej)=>{
     const r=indexedDB.open("worldmap",1);
@@ -113,8 +114,17 @@ async function loadData(){
     if(got&&got.h===DATAV)buf=got.b;
   }catch(e){}
   if(!buf){
-    buf=await fetchResumable("/static/map/map_world.bin",[]);
+    buf=await fetchResumable("/static/map/map_world.bin",[
+      // jsDelivr CDN（国内可达，单文件≤20MB；分支引用有≤12h缓存，bin 更新后镜像滞后时自动跳过走主源）
+      "https://cdn.jsdelivr.net/gh/zz632/city-war@new-map/static/map/map_world.bin"
+    ]);
     idbSave(buf);  // 后台写缓存，不阻塞出图
+  }
+  // gzip 流检测: 1f8b → 浏览器原生解压; 旧未压缩版(WMAP1)直接用
+  const u8=new Uint8Array(buf);
+  if(u8[0]===0x1f&&u8[1]===0x8b){
+    const ds=new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"));
+    buf=await new Response(ds).arrayBuffer();
   }
   const dv=new DataView(buf);
   const jl=dv.getUint32(8,true);
