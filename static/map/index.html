@@ -103,6 +103,54 @@ async function fetchResumable(path, mirrors){
   return out.buffer;
 }
 
+// ---------- 主源：npmmirror(阿里CDN) npm tarball ----------
+// npmmirror 的 /files/ 端点是白名单制(403)，但 tarball 全量下载畅通(302→cdn.npmmirror.com，实测 26MB/s，CORS 已放行)；
+// 整包下载后在本地解 tar 提取底图。npm tarball 外层是 gzip 压缩的 tar，需先解压再解析
+const TGZ="https://registry.npmmirror.com/citywar-map-data/-/citywar-map-data-1.1.0.tgz";
+// 简易 tar 解析(ustar)
+function untar(buf){
+  const files={},u=new Uint8Array(buf),td=new TextDecoder();
+  let off=0;
+  while(off+512<=u.length){
+    const name=td.decode(u.subarray(off,off+100)).replace(/\0.*$/,"");
+    if(!name)break;
+    const size=parseInt(td.decode(u.subarray(off+124,off+136)).replace(/\0.*$/,"").trim(),8)||0;
+    const prefix=td.decode(u.subarray(off+345,off+500)).replace(/\0.*$/,"").trim();
+    off+=512;
+    if(size>0)files[(prefix?prefix+"/":"")+name]=u.subarray(off,off+size);
+    off+=Math.ceil(size/512)*512;
+  }
+  return files;
+}
+async function loadFromNpm(){
+  const ac=new AbortController();const tm=setTimeout(()=>ac.abort(),90000);
+  try{
+    const r=await fetch(TGZ,{signal:ac.signal});
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    const total=+r.headers.get("content-length")||0;
+    const reader=r.body.getReader(),chunks=[];
+    let got=0,last=0;
+    while(true){
+      const {done,value}=await reader.read();
+      if(done)break;
+      chunks.push(value);got+=value.length;
+      const now=performance.now();
+      if(now-last>150){last=now;
+        hud.textContent="下载数据 "+(got/1048576).toFixed(1)+(total?"/"+(total/1048576).toFixed(1):"")+"MB";await yieldUI();}
+    }
+    const tgz=new Uint8Array(got);let o=0;
+    for(const c of chunks){tgz.set(c,o);o+=c.length;}
+    if(total&&got!==total)throw new Error("下载不完整 "+got+"/"+total);
+    hud.textContent="解包数据…";await yieldUI();
+    // 外层 gunzip → tar → 提取底图文件
+    const ds=new Blob([tgz]).stream().pipeThrough(new DecompressionStream("gzip"));
+    const tar=new Uint8Array(await new Response(ds).arrayBuffer());
+    const bin=untar(tar.buffer)["package/static/map/map_world.bin"];
+    if(!bin||bin.length<1000000)throw new Error("数据包内容异常");
+    return bin.slice().buffer;
+  }finally{clearTimeout(tm);}
+}
+
 async function loadData(){
   let buf=null;
   try{
@@ -114,7 +162,11 @@ async function loadData(){
     if(got&&got.h===DATAV)buf=got.b;
   }catch(e){}
   if(!buf){
-    buf=await fetchResumable("/static/map/map_world.bin",[
+    // 主源 npmmirror 阿里CDN tarball；失败回退 HF 源站/jsDelivr 断点续传
+    let ok=false;
+    try{ buf=await loadFromNpm(); ok=true; }
+    catch(e){ hud.textContent="CDN 不可用("+((e&&e.message)||e)+"), 切换备用源…"; await yieldUI(); }
+    if(!ok) buf=await fetchResumable("/static/map/map_world.bin",[
       // jsDelivr CDN（国内可达，单文件≤20MB；分支引用有≤12h缓存，bin 更新后镜像滞后时自动跳过走主源）
       "https://cdn.jsdelivr.net/gh/zz632/city-war@new-map/static/map/map_world.bin"
     ]);
