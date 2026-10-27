@@ -274,7 +274,7 @@ function draw(){
   }
   drawScale(vw,vh);
 }
-// ---------- 比例尺（墨卡托：视口中心纬度换算） ----------
+// ---------- 比例尺（墨卡托：等角投影，水平标尺按视口中心纬度换算，读数在该纬度圈上精确） ----------
 const SCALE_STEPS=[5000,3000,2000,1000,500,300,200,100,50,30,20,10,5,2,1];
 function drawScale(vw,vh){
   const wx=(vw/2-ox)/scale, wy=(vh/2-oy)/scale;
@@ -291,7 +291,10 @@ function drawScale(vw,vh){
   ctx.stroke();
   ctx.font="12px 'Songti SC','STSong','SimSun',serif";
   ctx.textAlign="center";ctx.textBaseline="bottom";
-  const label=km.toLocaleString()+" km";
+  // 标注参照纬度：比例尺读数随视口中心纬度变化（墨卡托形变），标明刻度所在纬度使读数有明确定义
+  const la=Math.abs(lat);
+  const latStr=la<0.5?"0°":Math.round(la)+"°"+(lat>=0?"N":"S");
+  const label=km.toLocaleString()+" km · "+latStr;
   ctx.lineWidth=3;ctx.strokeStyle="rgba(250,248,242,.85)";
   ctx.strokeText(label,(x1+x2)/2,y1-2);
   ctx.fillStyle="#33302a";ctx.fillText(label,(x1+x2)/2,y1-2);
