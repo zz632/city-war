@@ -22,6 +22,9 @@ from flask import Flask, render_template, request, jsonify, make_response, redir
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
 app = Flask(__name__)
+# 修正反向代理后的外部地址（HF Space 反代会把容器端口 7860 注入重定向 URL）
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'citywar-secret-key-2024')
 app.config['DEBUG'] = False
 app.config['PREFERRED_URL_SCHEME'] = 'http'
@@ -790,9 +793,12 @@ def index():
 
 
 @app.route('/map')
+@app.route('/map/')  # 两个路径都直接命中，避免 308 重定向被反代注入 :7860
 def map_page():
     # 新版世界地图（开发中预览页，静态资源在 /static/map/）
-    return send_from_directory('static/map', 'index.html')
+    resp = send_from_directory('static/map', 'index.html')
+    resp.headers['Cache-Control'] = 'no-cache'  # 渲染器更新立即生效，避免浏览器缓存旧版与分片版本错配
+    return resp
 
 
 @app.route('/lobby/<room_id>')
