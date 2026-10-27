@@ -1,0 +1,7 @@
+{
+  "name": "citywar-map-data",
+  "version": "1.1.0",
+  "description": "城池战争世界地图底图（gzip 压缩的 WMAP 二进制流）。发布后由 registry.npmmirror.com 同步至阿里 CDN，供 /map 页面国内加速下载。",
+  "files": ["static/map/map_world.bin"],
+  "publishConfig": { "access": "public" }
+}
