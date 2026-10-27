@@ -162,14 +162,22 @@ async function loadData(){
     if(got&&got.h===DATAV)buf=got.b;
   }catch(e){}
   if(!buf){
-    // 主源 npmmirror 阿里CDN tarball；失败回退 HF 源站/jsDelivr 断点续传
+    // 主源 npmmirror 阿里CDN tarball；失败回退 HF 源站分片断点续传
     let ok=false;
     try{ buf=await loadFromNpm(); ok=true; }
     catch(e){ hud.textContent="CDN 不可用("+((e&&e.message)||e)+"), 切换备用源…"; await yieldUI(); }
-    if(!ok) buf=await fetchResumable("/static/map/map_world.bin",[
-      // jsDelivr CDN（国内可达，单文件≤20MB；分支引用有≤12h缓存，bin 更新后镜像滞后时自动跳过走主源）
-      "https://cdn.jsdelivr.net/gh/zz632/city-war@new-map/static/map/map_world.bin"
-    ]);
+    if(!ok){
+      // 兜底：HF 源站分片（单文件≤10MiB 限制，底图切为 2MiB×8 片），断点续传
+      const bufs=[];
+      for(let i=0;i<8;i++){
+        bufs.push(await fetchResumable("static/map/map_world.bin.part"+i, []));
+        hud.textContent="下载数据 "+(i+1)+"/8 片";await yieldUI();
+      }
+      let total=0; for(const b of bufs) total+=b.byteLength;
+      const out=new Uint8Array(total); let off=0;
+      for(const b of bufs){ out.set(new Uint8Array(b), off); off+=b.byteLength; }
+      buf=out.buffer;
+    }
     idbSave(buf);  // 后台写缓存，不阻塞出图
   }
   // gzip 流检测: 1f8b → 浏览器原生解压; 旧未压缩版(WMAP1)直接用
