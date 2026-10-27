@@ -54,54 +54,6 @@ async function idbSave(buf){
     await Promise.race([p,new Promise(r=>setTimeout(r,5000))]);
   }catch(e){}
 }
-// 断点续传下载: 8MB分块+Range重试, 全失败自动换镜像, 防长连接被掐
-async function fetchResumable(path, mirrors){
-  const urls=[path].concat(mirrors||[]);
-  let total=0;
-  for(const u of urls){
-    try{
-      const h=await fetch(u,{method:"HEAD"});
-      const cl=+h.headers.get("content-length")||0;
-      if(cl>1000000){total=cl;break;}
-    }catch(e){}
-  }
-  if(!total){ // HEAD都失败, 退化为单次下载
-    for(const u of urls){
-      try{hud.textContent="下载数据…";await yieldUI();
-        const r=await fetch(u); if(!r.ok)continue;
-        return await r.arrayBuffer();
-      }catch(e){}
-    }
-    throw new Error("无法下载数据(所有来源)");
-  }
-  const CH=8*1024*1024, out=new Uint8Array(total);
-  let url=urls[0];
-  for(let s=0;s<total;s+=CH){
-    const e=Math.min(s+CH,total)-1;
-    let ok=false;
-    for(let a=0;a<urls.length*6&&!ok;a++){ // 每块最多重试(来源数×6)次
-      if(a&&a%urls.length===0){url=urls[(a/urls.length)%urls.length|0];}
-      try{
-        const st=performance.now();
-        const r=await fetch(url,{headers:{Range:"bytes="+s+"-"+e}});
-        if(!(r.status===206||r.status===200))throw new Error(r.status);
-        const b=new Uint8Array(await r.arrayBuffer());
-        if(r.status===200){ // 服务器不支持Range, 直接回了全量
-          if(s===0&&b.length===total)return b.buffer;
-          throw new Error("不支持续传");
-        }
-        if(b.length!==e-s+1)throw new Error("长度不符");
-        out.set(b,s);ok=true;
-      }catch(err){
-        hud.textContent="网络中断, 从断点继续… ("+(s/1048576|0)+"/"+(total/1048576|0)+"MB)";
-        await yieldUI();await new Promise(r=>setTimeout(r,800));
-      }
-    }
-    if(!ok)throw new Error("分块下载失败 @" + s);
-    hud.textContent="下载数据 "+((s+CH)/1048576|0)+"/"+(total/1048576|0)+"MB";await yieldUI();
-  }
-  return out.buffer;
-}
 
 // ---------- 主源：npmmirror(阿里CDN) npm tarball ----------
 // npmmirror 的 /files/ 端点是白名单制(403)，但 tarball 全量下载畅通(302→cdn.npmmirror.com，实测 26MB/s，CORS 已放行)；
@@ -162,20 +114,30 @@ async function loadData(){
     if(got&&got.h===DATAV)buf=got.b;
   }catch(e){}
   if(!buf){
-    // 主源 npmmirror 阿里CDN tarball；失败回退 HF 源站分片断点续传
+    // 主源 npmmirror 阿里CDN tarball；失败回退 jsDelivr GitHub 通道分片
     let ok=false;
     try{ buf=await loadFromNpm(); ok=true; }
     catch(e){ hud.textContent="CDN 不可用("+((e&&e.message)||e)+"), 切换备用源…"; await yieldUI(); }
     if(!ok){
-      // 兜底：HF 源站分片（单文件≤10MiB 限制，底图切为 2MiB×8 片），断点续传
+      // 兜底：jsDelivr GitHub 通道分片（2MB 小片全量 GET；HF Space 已不存底图二进制）
       const bufs=[];
       for(let i=0;i<8;i++){
-        bufs.push(await fetchResumable("static/map/map_world.bin.part"+i, []));
+        let b=null;
+        for(let t=0;t<3&&!b;t++){
+          try{
+            const ac=new AbortController();const tm=setTimeout(()=>ac.abort(),60000);
+            const r=await fetch("https://cdn.jsdelivr.net/gh/zz632/city-war@main/static/map/map_world.bin.part"+i,{signal:ac.signal});
+            clearTimeout(tm);
+            if(r.ok)b=new Uint8Array(await r.arrayBuffer());
+          }catch(e){}
+        }
+        if(!b)throw new Error("分片"+i+"下载失败(所有来源)");
+        bufs.push(b);
         hud.textContent="下载数据 "+(i+1)+"/8 片";await yieldUI();
       }
       let total=0; for(const b of bufs) total+=b.byteLength;
       const out=new Uint8Array(total); let off=0;
-      for(const b of bufs){ out.set(new Uint8Array(b), off); off+=b.byteLength; }
+      for(const b of bufs){ out.set(b, off); off+=b.byteLength; }
       buf=out.buffer;
     }
     idbSave(buf);  // 后台写缓存，不阻塞出图
