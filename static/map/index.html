@@ -20,9 +20,9 @@ font:13px/1.5 "Songti SC","STSong",serif;pointer-events:none;z-index:9;border-ra
 <script>
 "use strict";
 const W=4096, PPR=W/(2*Math.PI);
-const YTOP=Math.log(Math.tan(Math.PI/4+(78*Math.PI/180)/2));
-const YBOT=Math.log(Math.tan(Math.PI/4+(-58*Math.PI/180)/2));
-const H=Math.round((YTOP-YBOT)*PPR);
+const YTOP=Math.log(Math.tan(Math.PI/4+(78*Math.PI/180)/2));   // 数据坐标系原点: y=0 对应 78°N
+const VTOP=Math.log(Math.tan(Math.PI/4+(85*Math.PI/180)/2));   // 视图上下限 ±85°: 墨卡托在 90° 处 y→∞, 投影极限即 85.05°, 90N/S 不可达
+const H=Math.round(2*VTOP*PPR);   // 视图总高 = Y(-85)-Y(85)(数据坐标系), 含南极洲; 数据本体不动, 仅视图延伸
 function X(lon){return (lon+180)*Math.PI/180*PPR}
 function Y(lat){const t=Math.max(-85,Math.min(85,lat));return (YTOP-Math.log(Math.tan(Math.PI/4+(t*Math.PI/180)/2)))*PPR}
 const PAL=["#f3f0e7","#f0ede3","#f4f1e9","#efece2","#f2efe5","#edeade","#f1eee4","#eeebdf"];
