@@ -340,15 +340,15 @@ function interact(){
   idleTimer=setTimeout(()=>{idleT=0;schedule()},200);
   schedule();
 }
-function addRings(i){  // 向当前路径追加要素 i 的全部环(用 FRr/ROFFr/Cr 与当前副本偏移 OX)
+function addRings(g,i){  // 向画布 g 的当前路径追加要素 i 的全部环(用 FRr/ROFFr/Cr 与当前副本偏移 OX)
   for(let r=FRr[i];r<FRr[i+1];r++){
     const s=ROFFr[r]*2,t=ROFFr[r+1]*2;
-    ctx.moveTo(Cr[s]*scale+OX,Cr[s+1]*scale+oy);
-    for(let a=s+2;a<t;a+=2)ctx.lineTo(Cr[a]*scale+OX,Cr[a+1]*scale+oy);
-    ctx.closePath();
+    g.moveTo(Cr[s]*scale+OX,Cr[s+1]*scale+oy);
+    for(let a=s+2;a<t;a+=2)g.lineTo(Cr[a]*scale+OX,Cr[a+1]*scale+oy);
+    g.closePath();
   }
 }
-function strokePoly(i){ctx.beginPath();addRings(i)}
+function strokePoly(i){ctx.beginPath();addRings(ctx,i)}
 function drawLand(cand,wx0,wx1,wy0,wy1){
   ctx.lineWidth=.6;ctx.strokeStyle="rgba(70,68,60,.35)";ctx.lineJoin="round";
   // 按主题色分桶, 每桶合并为一条路径只做一次填充+描边(大幅减少状态切换)
@@ -365,44 +365,110 @@ function drawLand(cand,wx0,wx1,wy0,wy1){
   for(let b=0;b<8;b++){
     const arr=BK[b];if(!arr.length)continue;
     ctx.beginPath();
-    for(const i of arr)addRings(i);
+    for(const i of arr)addRings(ctx,i);
     ctx.fillStyle=PAL[b];ctx.fill();
     ctx.stroke();
   }
 }
-// ---------- 整图快照：空闲时把世界预渲染成位图, 交互(拖动/缩放)期间直接贴图, 彻底消除卡顿 ----------
-let snap=null,s0=0,sQ=1;
-function buildSnap(){
-  const cw=W*scale*DPR,ch=H*scale*DPR;
-  if(!nf||cw>8192||ch>8192){snap=null;return}
-  const q=Math.min(1,Math.sqrt(16777216/(cw*ch)));  // 快照不超过 16MP
+// ---------- 整图快照：启动后分帧渐进渲染一张固定分辨率世界位图(scale=1, 4096px 宽) ----------
+// 之后所有缩小态的拖动/缩放都直接贴这张图, 零矢量重绘、零重复构建, 彻底消除卡顿
+let snap=null,snapJob=null;
+function paintLandChunk(g,from,to){
+  g.lineWidth=.6;g.strokeStyle="rgba(70,68,60,.35)";g.lineJoin="round";
+  const BK=[[],[],[],[],[],[],[],[]];
+  for(let i=from;i<to;i++)BK[CIDv[i]%8].push(i);
+  for(let b=0;b<8;b++){
+    const arr=BK[b];if(!arr.length)continue;
+    g.beginPath();
+    for(const i of arr)addRings(g,i);
+    g.fillStyle=PAL[b];g.fill();g.stroke();
+  }
+}
+function paintLakeChunk(g,from,to){
+  g.fillStyle=SEAC;
+  for(let i=from;i<to;i++){
+    g.beginPath();
+    for(let r=WF[i];r<WF[i+1];r++){
+      const s=WROFF[r]*2,t=WROFF[r+1]*2;
+      g.moveTo(WC[s],WC[s+1]);
+      for(let p=s+2;p<t;p+=2)g.lineTo(WC[p],WC[p+1]);
+      g.closePath();
+    }
+    g.fill("evenodd");
+  }
+}
+function paintRiverChunk(g,from,to){
+  g.strokeStyle=SEAC;g.lineCap="round";g.lineJoin="round";
+  for(let w=0;w<3;w++){
+    g.beginPath();let any=false;
+    for(let i=from;i<to;i++){
+      if((RW1[i]||0)!==w)continue;
+      const s=RF[i]*2,t=RF[i+1]*2;
+      g.moveTo(RC[s],RC[s+1]);
+      for(let p=s+2;p<t;p+=2)g.lineTo(RC[p],RC[p+1]);
+      any=true;
+    }
+    if(any){g.lineWidth=RIVW[w]||1.1;g.stroke()}
+  }
+}
+function startSnapBuild(){
+  if(snapJob||snap||!nf)return;
   const c=document.createElement("canvas");
-  c.width=Math.max(1,Math.ceil(cw*q));c.height=Math.max(1,Math.ceil(ch*q));
+  c.width=W;c.height=H;
   const sc=c.getContext("2d");
-  const saved=ctx,sOX=OX,soy=oy,ssc=scale;
-  ctx=sc;OX=0;oy=0;scale=ssc*q;
-  sc.setTransform(q*DPR,0,0,q*DPR,0,0);
-  FRr=FR;ROFFr=ROFF;Cr=C;   // 快照永远用精版几何
-  sc.fillStyle="#a6cbe2";sc.fillRect(0,0,W*ssc*q,H*ssc*q);
-  drawLand(null,-1e9,1e9,-1e9,1e9);
-  drawWater(true,-1e9,1e9,-1e9,1e9);
-  ctx=saved;OX=sOX;oy=soy;scale=ssc;
-  snap=c;s0=ssc;sQ=q;
+  sc.fillStyle="#a6cbe2";sc.fillRect(0,0,W,H);
+  snapJob={c,sc,land:0,lake:0,river:0,phase:0};
+  requestAnimationFrame(pumpSnap);
+}
+function pumpSnap(){
+  const j=snapJob;if(!j)return;
+  const t0=performance.now();
+  const sCtx=ctx,sOx=OX,sOy=oy,sSc=scale,sFRr=FRr,sROFFr=ROFFr,sCr=Cr;
+  ctx=j.sc;OX=0;oy=0;scale=1;FRr=FR;ROFFr=ROFF;Cr=C;   // 快照用精版几何
+  while(performance.now()-t0<12){                       // 每帧最多画 12ms, 不阻塞交互
+    if(j.phase===0){
+      const to=Math.min(nf,j.land+600);
+      paintLandChunk(j.sc,j.land,to);j.land=to;
+      if(j.land>=nf)j.phase=1;
+    }else if(j.phase===1){
+      const to=Math.min(nl,j.lake+200);
+      paintLakeChunk(j.sc,j.lake,to);j.lake=to;
+      if(j.lake>=nl)j.phase=2;
+    }else{
+      const to=Math.min(nriv,j.river+400);
+      paintRiverChunk(j.sc,j.river,to);j.river=to;
+      if(j.river>=nriv)j.phase=3;
+    }
+    if(j.phase>=3)break;
+  }
+  ctx=sCtx;OX=sOx;oy=sOy;scale=sSc;FRr=sFRr;ROFFr=sROFFr;Cr=sCr;
+  if(j.phase>=3){snap=j.c;snapJob=null}
+  else requestAnimationFrame(pumpSnap);
 }
 function draw(){
   pend=false;
   const vw=cv.width/DPR,vh=cv.height/DPR;
   ctx.setTransform(DPR,0,0,DPR,0,0);
   ctx.fillStyle="#a6cbe2";ctx.fillRect(0,0,vw,vh);
-  const zoomed=(vw/scale)<W*0.15;      // 低缩放用 LOD 粗几何，放大用全量+网格裁剪
-  const fine=zoomed&&!idleT;           // 交互中用粗版, 空闲切精版
-  if(!zoomed&&!idleT&&(!snap||s0!==scale))buildSnap();  // 空闲时刷新整图快照
-  if(!zoomed&&snap){
-    // 交互/静止: 直接贴快照(横向环绕多副本), 拖动缩放零矢量开销
-    const ws=W*scale,hs=H*scale;
-    const k0=Math.floor((0-ox)/ws),k1=Math.floor((vw-ox)/ws);
-    for(let k=k0;k<=k1;k++)ctx.drawImage(snap,ox+k*ws,oy,ws,hs);
+  const zoomed=(vw/scale)<W*0.15||scale>1.25;  // 放大态走矢量(粗/精 LOD); 缩小态一律贴快照(≤1.25 倍轻微上采样)
+  if(!zoomed){
+    if(snap){
+      const ws=W*scale,hs=H*scale;
+      const k0=Math.floor((0-ox)/ws),k1=Math.floor((vw-ox)/ws);
+      for(let k=k0;k<=k1;k++)ctx.drawImage(snap,ox+k*ws,oy,ws,hs);
+    }else{
+      FRr=FR2;ROFFr=ROFF2;Cr=C2;   // 快照未就绪时先用粗版矢量顶替
+      const ws=W*scale;
+      const k0=Math.floor((0-ox)/ws),k1=Math.floor((vw-ox)/ws);
+      for(let k=k0;k<=k1;k++){
+        OX=ox+k*ws;
+        drawLand(null,(0-OX)/scale-1e6,(vw-OX)/scale+1e6,(0-oy)/scale-1e6,(vh-oy)/scale+1e6);
+        drawWater(false,(0-OX)/scale-1e6,(vw-OX)/scale+1e6,(0-oy)/scale-1e6,(vh-oy)/scale+1e6);
+      }
+      startSnapBuild();   // 首帧渲染后立即开始渐进构建快照
+    }
   }else{
+    const fine=!idleT;
     FRr=fine?FR:FR2;ROFFr=fine?ROFF:ROFF2;Cr=fine?C:C2;
     // 横向环绕: 画出与视口相交的所有世界副本(通常 1~2 个)
     const ws=W*scale;
