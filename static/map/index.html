@@ -122,7 +122,10 @@ async function fetchResumable(path, mirrors){
 // ---------- 主源：npmmirror(阿里CDN) npm tarball ----------
 // npmmirror 的 /files/ 端点是白名单制(403)，但 tarball 全量下载畅通(302→cdn.npmmirror.com，实测 26MB/s，CORS 已放行)；
 // 整包下载后在本地解 tar 提取底图与水体。npm tarball 外层是 gzip 压缩的 tar，需先解压再解析
-const TGZ="https://registry.npmmirror.com/citywar-map-data/-/citywar-map-data-1.2.1.tgz";
+// 多版本兜底: 最新版优先, 缺哪块补哪块(1.2.0 起含水体, 1.1.0 仅底图)
+const TGZS=["https://registry.npmmirror.com/citywar-map-data/-/citywar-map-data-1.2.1.tgz",
+            "https://registry.npmmirror.com/citywar-map-data/-/citywar-map-data-1.2.0.tgz",
+            "https://registry.npmmirror.com/citywar-map-data/-/citywar-map-data-1.1.0.tgz"];
 // 简易 tar 解析(ustar)
 function untar(buf){
   const files={},u=new Uint8Array(buf),td=new TextDecoder();
@@ -138,10 +141,10 @@ function untar(buf){
   }
   return files;
 }
-async function loadFromNpm(){
+async function loadFromNpm(url){
   const ac=new AbortController();const tm=setTimeout(()=>ac.abort(),90000);
   try{
-    const r=await fetch(TGZ,{signal:ac.signal});
+    const r=await fetch(url,{signal:ac.signal});
     if(!r.ok)throw new Error("HTTP "+r.status);
     const total=+r.headers.get("content-length")||0;
     const reader=r.body.getReader(),chunks=[];
@@ -162,10 +165,12 @@ async function loadFromNpm(){
     const ds=new Blob([tgz]).stream().pipeThrough(new DecompressionStream("gzip"));
     const tar=new Uint8Array(await new Response(ds).arrayBuffer());
     const files=untar(tar.buffer);
+    const out={};
     const bin=files["package/static/map/map_world.bin"];
-    if(!bin||bin.length<1000000)throw new Error("数据包内容异常");
-    const out={world:bin.slice().buffer};
-    if(files["package/static/map/map_water.bin"])out.water=files["package/static/map/map_water.bin"].slice().buffer;
+    if(bin&&bin.length>1000000)out.world=bin.slice().buffer;
+    const wat=files["package/static/map/map_water.bin"];
+    if(wat&&wat.length>100000)out.water=wat.slice().buffer;
+    if(!out.world&&!out.water)throw new Error("数据包内容异常");
     return out;
   }finally{clearTimeout(tm);}
 }
@@ -174,20 +179,23 @@ async function loadData(){
   let buf=await idbGet("bin",DATAV);
   let wbuf=await idbGet("water",WATERV);
   if(!buf||!wbuf){
-    // 主源 npmmirror 阿里CDN tarball（底图+水体一次拿全）；失败回退 HF 源站
-    let ok=false;
-    try{
-      const t=await loadFromNpm(); ok=true;
-      if(!buf&&t.world)buf=t.world;
-      if(!wbuf&&t.water)wbuf=t.water;
-    }catch(e){ hud.textContent="CDN 不可用("+((e&&e.message)||e)+"), 切换备用源…"; await yieldUI(); }
+    // 主源 npmmirror 阿里CDN tarball：按版本从新到旧逐个尝试, 缺哪块补哪块; 全败回退 HF 源站
+    for(const u of TGZS){
+      if(buf&&wbuf)break;
+      try{
+        const t=await loadFromNpm(u);
+        if(!buf&&t.world)buf=t.world;
+        if(!wbuf&&t.water)wbuf=t.water;
+      }catch(e){ hud.textContent="CDN 不可用("+((e&&e.message)||e)+"), 换源重试…"; await yieldUI(); }
+    }
     if(!buf){
-      // 兜底：HF 源站分片（单文件≤10MiB 限制，底图切为 2MiB×8 片），断点续传
-      const bufs=[];
-      for(let i=0;i<8;i++){
-        bufs.push(await fetchResumable("/static/map/map_world.bin.part"+i, []));
-        hud.textContent="下载数据 "+(i+1)+"/8 片";await yieldUI();
-      }
+      // 兜底：HF 源站分片（单文件≤10MiB 限制，底图切为 2MiB×8 片），并行下载+断点续传
+      hud.textContent="CDN 不可用, 从备用源并行下载底图…";await yieldUI();
+      const t0=performance.now();
+      const bufs=await Promise.all([0,1,2,3,4,5,6,7].map(i=>
+        fetchResumable("/static/map/map_world.bin.part"+i, []).then(b=>{
+          hud.textContent="备用源 "+(i+1)+"/8 片完成 ("+((performance.now()-t0)/1000|0)+"s)";return b;
+        })));
       let total=0; for(const b of bufs) total+=b.byteLength;
       const out=new Uint8Array(total); let off=0;
       for(const b of bufs){ out.set(b, off); off+=b.byteLength; }
@@ -662,13 +670,15 @@ cv.addEventListener("touchend",e=>{
 cv.addEventListener("touchstart",e=>{if(e.touches.length>=1)interact()},{passive:true});
 // ---------- 启动 ----------
 (async function(){
+  const T0=performance.now();
   try{
     hud.textContent="下载数据…";await yieldUI();
     await loadData();
     hud.textContent="建索引…";await yieldUI();
     buildGrid();
     resize();
-    hud.textContent="世界底图 · 版块 "+GM.size+" · 行政单元 "+nf+" · 拖动平移 / 滚轮缩放 / 双击复位";
+    const el=((performance.now()-T0)/1000).toFixed(1);
+    hud.textContent="世界底图 · 版块 "+GM.size+" · 行政单元 "+nf+" · 拖动平移 / 滚轮缩放 / 双击复位 (加载 "+el+"s)";
   }catch(err){
     hud.textContent="加载失败: "+((err&&err.message)||err);
   }
