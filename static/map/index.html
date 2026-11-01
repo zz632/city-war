@@ -122,7 +122,7 @@ async function fetchResumable(path, mirrors){
 // ---------- 主源：npmmirror(阿里CDN) npm tarball ----------
 // npmmirror 的 /files/ 端点是白名单制(403)，但 tarball 全量下载畅通(302→cdn.npmmirror.com，实测 26MB/s，CORS 已放行)；
 // 整包下载后在本地解 tar 提取底图与水体。npm tarball 外层是 gzip 压缩的 tar，需先解压再解析
-const TGZ="https://registry.npmmirror.com/citywar-map-data/-/citywar-map-data-1.2.0.tgz";
+const TGZ="https://registry.npmmirror.com/citywar-map-data/-/citywar-map-data-1.2.1.tgz";
 // 简易 tar 解析(ustar)
 function untar(buf){
   const files={},u=new Uint8Array(buf),td=new TextDecoder();
