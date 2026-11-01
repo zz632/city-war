@@ -286,9 +286,11 @@ function buildGrid(){
     const a=BOX[i*4],b=BOX[i*4+1],e=BOX[i*4+2],d=BOX[i*4+3];
     const x0=Math.floor((a/W*360+180)/CS),x1=Math.floor((e/W*360+180)/CS);
     const y0=Math.floor((b/H*360+180)/CS),y1=Math.floor((d/H*360+180)/CS);
-    if((x1-x0+1)*(y1-y0+1)>48){BIG.push(i);continue}
-    for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++){
-      const k=x+":"+y;let arr=GRD.get(k);if(!arr){arr=[];GRD.set(k,arr)}arr.push(i);
+    let xspan=x1-x0+1; if(xspan<=0)xspan+=180;   // 跨180°经线的单元(如斐济)环绕计数
+    if(xspan*(y1-y0+1)>48){BIG.push(i);continue}
+    for(let t=0;t<xspan;t++)for(let y=y0;y<=y1;y++){
+      const xx=(((x0+t)%180)+180)%180;   // 经度环绕: 列键取模(必须与绘制查询一致, 否则精版全被裁掉)
+      const k=xx+":"+y;let arr=GRD.get(k);if(!arr){arr=[];GRD.set(k,arr)}arr.push(i);
     }
   }
 }
@@ -308,7 +310,8 @@ function inPolys(px,py,i){
 }
 function pick(lon,lat){
   const px=X(lon),py=Y(lat);
-  const k=Math.floor((lon+180)/CS)+":"+Math.floor((lat+90)/CS);
+  const xx=(((Math.floor((px/W*360+180)/CS))%180)+180)%180;
+  const k=xx+":"+Math.floor((py/H*360+180)/CS);
   const cand=(GRD.get(k)||[]).concat(BIG);
   for(const i of cand){
     if(px<BOX[i*4]||px>BOX[i*4+2]||py<BOX[i*4+1]||py>BOX[i*4+3])continue;
