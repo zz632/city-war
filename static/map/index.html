@@ -27,7 +27,8 @@ function X(lon){return (lon+180)*Math.PI/180*PPR}
 function Y(lat){const t=Math.max(-85,Math.min(85,lat));return (YTOP-Math.log(Math.tan(Math.PI/4+(t*Math.PI/180)/2)))*PPR}
 const PAL=["#f3f0e7","#f0ede3","#f4f1e9","#efece2","#f2efe5","#edeade","#f1eee4","#eeebdf"];
 const HOV="rgba(140,158,128,.55)";
-const cv=document.getElementById("cv"),ctx=cv.getContext("2d");
+const cv=document.getElementById("cv");
+let ctx=cv.getContext("2d");   // let: 生成整图快照时临时切换到离屏画布
 const hud=document.getElementById("hud"),tip=document.getElementById("tip");
 const DPR=Math.min(2,window.devicePixelRatio||1);
 const yieldUI=()=>new Promise(r=>setTimeout(r,0));
@@ -369,6 +370,25 @@ function drawLand(cand,wx0,wx1,wy0,wy1){
     ctx.stroke();
   }
 }
+// ---------- 整图快照：空闲时把世界预渲染成位图, 交互(拖动/缩放)期间直接贴图, 彻底消除卡顿 ----------
+let snap=null,s0=0,sQ=1;
+function buildSnap(){
+  const cw=W*scale*DPR,ch=H*scale*DPR;
+  if(!nf||cw>8192||ch>8192){snap=null;return}
+  const q=Math.min(1,Math.sqrt(16777216/(cw*ch)));  // 快照不超过 16MP
+  const c=document.createElement("canvas");
+  c.width=Math.max(1,Math.ceil(cw*q));c.height=Math.max(1,Math.ceil(ch*q));
+  const sc=c.getContext("2d");
+  const saved=ctx,sOX=OX,soy=oy,ssc=scale;
+  ctx=sc;OX=0;oy=0;scale=ssc*q;
+  sc.setTransform(q*DPR,0,0,q*DPR,0,0);
+  FRr=FR;ROFFr=ROFF;Cr=C;   // 快照永远用精版几何
+  sc.fillStyle="#a6cbe2";sc.fillRect(0,0,W*ssc*q,H*ssc*q);
+  drawLand(null,-1e9,1e9,-1e9,1e9);
+  drawWater(true,-1e9,1e9,-1e9,1e9);
+  ctx=saved;OX=sOX;oy=soy;scale=ssc;
+  snap=c;s0=ssc;sQ=q;
+}
 function draw(){
   pend=false;
   const vw=cv.width/DPR,vh=cv.height/DPR;
@@ -376,31 +396,39 @@ function draw(){
   ctx.fillStyle="#a6cbe2";ctx.fillRect(0,0,vw,vh);
   const zoomed=(vw/scale)<W*0.15;      // 低缩放用 LOD 粗几何，放大用全量+网格裁剪
   const fine=zoomed&&!idleT;           // 交互中用粗版, 空闲切精版
-  FRr=fine?FR:FR2;ROFFr=fine?ROFF:ROFF2;Cr=fine?C:C2;
-  // 横向环绕: 画出与视口相交的所有世界副本(通常 1~2 个)
-  const ws=W*scale;
-  const k0=Math.floor((0-ox)/ws),k1=Math.floor((vw-ox)/ws);
-  for(let k=k0;k<=k1;k++){
-    OX=ox+k*ws;
-    const wx0=(0-OX)/scale,wx1=(vw-OX)/scale,wy0=(0-oy)/scale,wy1=(vh-oy)/scale;
-    let cand=null;
-    if(fine){
-      const gx0=Math.floor((wx0/W*360+180)/CS)-1,gx1=Math.floor((wx1/W*360+180)/CS)+1;
-      const gy0=Math.floor((wy0/H*360+180)/CS)-1,gy1=Math.floor((wy1/H*360+180)/CS)+1;
-      const seen=new Set();
-      for(let x=gx0;x<=gx1;x++)for(let y=gy0;y<=gy1;y++){
-        const xx=((x%180)+180)%180;   // 经度环绕: 网格列号取模
-        const arr=GRD.get(xx+":"+y);if(arr)for(const i of arr)seen.add(i);
+  if(!zoomed&&!idleT&&(!snap||s0!==scale))buildSnap();  // 空闲时刷新整图快照
+  if(!zoomed&&snap){
+    // 交互/静止: 直接贴快照(横向环绕多副本), 拖动缩放零矢量开销
+    const ws=W*scale,hs=H*scale;
+    const k0=Math.floor((0-ox)/ws),k1=Math.floor((vw-ox)/ws);
+    for(let k=k0;k<=k1;k++)ctx.drawImage(snap,ox+k*ws,oy,ws,hs);
+  }else{
+    FRr=fine?FR:FR2;ROFFr=fine?ROFF:ROFF2;Cr=fine?C:C2;
+    // 横向环绕: 画出与视口相交的所有世界副本(通常 1~2 个)
+    const ws=W*scale;
+    const k0=Math.floor((0-ox)/ws),k1=Math.floor((vw-ox)/ws);
+    for(let k=k0;k<=k1;k++){
+      OX=ox+k*ws;
+      const wx0=(0-OX)/scale,wx1=(vw-OX)/scale,wy0=(0-oy)/scale,wy1=(vh-oy)/scale;
+      let cand=null;
+      if(fine){
+        const gx0=Math.floor((wx0/W*360+180)/CS)-1,gx1=Math.floor((wx1/W*360+180)/CS)+1;
+        const gy0=Math.floor((wy0/H*360+180)/CS)-1,gy1=Math.floor((wy1/H*360+180)/CS)+1;
+        const seen=new Set();
+        for(let x=gx0;x<=gx1;x++)for(let y=gy0;y<=gy1;y++){
+          const xx=((x%180)+180)%180;   // 经度环绕: 网格列号取模
+          const arr=GRD.get(xx+":"+y);if(arr)for(const i of arr)seen.add(i);
+        }
+        for(const i of BIG)seen.add(i);
+        cand=seen;
       }
-      for(const i of BIG)seen.add(i);
-      cand=seen;
+      drawLand(cand,wx0,wx1,wy0,wy1);
+      drawWater(fine,wx0,wx1,wy0,wy1);   // 河湖与海同色, 盖在陆地色块上
     }
-    drawLand(cand,wx0,wx1,wy0,wy1);
-    drawWater(fine,wx0,wx1,wy0,wy1);   // 河湖与海同色, 盖在陆地色块上
   }
   if(hovG>=0){
     const g=GM.get(hovG);
-    if(g){OX=hovOX;ctx.fillStyle=HOV;
+    if(g){OX=hovOX;FRr=FR;ROFFr=ROFF;Cr=C;ctx.fillStyle=HOV;
       for(const i of g.mem){strokePoly(i);ctx.fill()}}
   }
   drawScale(vw,vh);
@@ -477,6 +505,8 @@ addEventListener("mouseup",()=>{drag=false;cv.style.cursor="grab"});
 cv.addEventListener("dblclick",()=>{fit();clampView();schedule()});
 cv.addEventListener("wheel",e=>{
   e.preventDefault();
+  const sMin=Math.min(cv.width/DPR/W,cv.height/DPR/H)*0.98;
+  if(e.deltaY>0&&scale<=sMin+1e-6)return;  // 已到最小缩放, 不再移动/缩小
   const f=e.deltaY<0?1.18:1/1.18;
   const mx=e.clientX,my=e.clientY;
   ox=mx-(mx-ox)*f;oy=my-(my-oy)*f;scale*=f;
