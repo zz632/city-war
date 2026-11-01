@@ -268,11 +268,14 @@ async function loadData(){
       RF=new Int32Array(wbuf,wo,nriv+1); wo+=(nriv+1)*4;
       RC=new Float32Array(wbuf,wo,wm.rivpts*2); wo+=wm.rivpts*8;
       RW1=new Uint8Array(wbuf,wo,nriv); wo+=nriv;
+      // 注意: RW1 后可能无 4 字节对齐(旧数据包), 直接 Float32Array 视图会 RangeError → 用 slice 拷贝解析(无对齐要求)
       nriv2=wm.nriv2;
-      RB2=new Float32Array(wbuf,wo,nriv2*4); wo+=nriv2*16;
-      RF2=new Int32Array(wbuf,wo,nriv2+1); wo+=(nriv2+1)*4;
-      RC2=new Float32Array(wbuf,wo,wm.rivpts2*2); wo+=wm.rivpts2*8;
-      RW2=new Uint8Array(wbuf,wo,nriv2);
+      const rlen=nriv2*16+(nriv2+1)*4+wm.rivpts2*8+nriv2;
+      const rbuf=wbuf.slice(wo,wo+rlen);
+      RB2=new Float32Array(rbuf,0,nriv2*4);
+      RF2=new Int32Array(rbuf,nriv2*16,nriv2+1);
+      RC2=new Float32Array(rbuf,nriv2*16+(nriv2+1)*4,wm.rivpts2*2);
+      RW2=new Uint8Array(rbuf,nriv2*16+(nriv2+1)*4+wm.rivpts2*8,nriv2);
     }catch(e){ console.warn("水体数据解析失败",e); }
   }
 }
@@ -433,22 +436,25 @@ function pumpSnap(){
   const t0=performance.now();
   const sCtx=ctx,sOx=OX,sOy=oy,sSc=scale,sFRr=FRr,sROFFr=ROFFr,sCr=Cr;
   ctx=j.sc;OX=0;oy=0;scale=1;FRr=FR;ROFFr=ROFF;Cr=C;   // 快照用精版几何
-  while(performance.now()-t0<12){                       // 每帧最多画 12ms, 不阻塞交互
-    if(j.phase===0){
-      const to=Math.min(nf,j.land+600);
-      paintLandChunk(j.sc,j.land,to);j.land=to;
-      if(j.land>=nf)j.phase=1;
-    }else if(j.phase===1){
-      const to=Math.min(nl,j.lake+200);
-      paintLakeChunk(j.sc,j.lake,to);j.lake=to;
-      if(j.lake>=nl)j.phase=2;
-    }else{
-      const to=Math.min(nriv,j.river+400);
-      paintRiverChunk(j.sc,j.river,to);j.river=to;
-      if(j.river>=nriv)j.phase=3;
+  try{
+    while(performance.now()-t0<12){                       // 每帧最多画 12ms, 不阻塞交互
+      if(j.phase===0){
+        const to=Math.min(nf,j.land+600);
+        paintLandChunk(j.sc,j.land,to);j.land=to;
+        if(j.land>=nf)j.phase=1;
+      }else if(j.phase===1){
+        const to=Math.min(nl,j.lake+200);
+        paintLakeChunk(j.sc,j.lake,to);j.lake=to;
+        if(j.lake>=nl)j.phase=2;
+      }else{
+        const to=Math.min(nriv,j.river+400);
+        paintRiverChunk(j.sc,j.river,to);j.river=to;
+        if(j.river>=nriv)j.phase=3;
+      }
+      if(j.phase>=3)break;
     }
-    if(j.phase>=3)break;
-  }
+  }catch(e){ console.error("快照构建失败, 改用矢量渲染",e); snapJob=null;
+    ctx=sCtx;OX=sOx;oy=sOy;scale=sSc;FRr=sFRr;ROFFr=sROFFr;Cr=sCr;return; }
   ctx=sCtx;OX=sOx;oy=sOy;scale=sSc;FRr=sFRr;ROFFr=sROFFr;Cr=sCr;
   if(j.phase>=3){snap=j.c;snapJob=null}
   else requestAnimationFrame(pumpSnap);
@@ -470,8 +476,10 @@ function draw(){
       const k0=Math.floor((0-ox)/ws),k1=Math.floor((vw-ox)/ws);
       for(let k=k0;k<=k1;k++){
         OX=ox+k*ws;
-        drawLand(null,(0-OX)/scale-1e6,(vw-OX)/scale+1e6,(0-oy)/scale-1e6,(vh-oy)/scale+1e6);
-        drawWater(false,(0-OX)/scale-1e6,(vw-OX)/scale+1e6,(0-oy)/scale-1e6,(vh-oy)/scale+1e6);
+        try{
+          drawLand(null,(0-OX)/scale-1e6,(vw-OX)/scale+1e6,(0-oy)/scale-1e6,(vh-oy)/scale+1e6);
+          drawWater(false,(0-OX)/scale-1e6,(vw-OX)/scale+1e6,(0-oy)/scale-1e6,(vh-oy)/scale+1e6);
+        }catch(e){ console.error("副本渲染失败 k="+k,e) }
       }
       startSnapBuild();   // 首帧渲染后立即开始渐进构建快照
     }
@@ -496,8 +504,10 @@ function draw(){
         for(const i of BIG)seen.add(i);
         cand=seen;
       }
-      drawLand(cand,wx0,wx1,wy0,wy1);
-      drawWater(fine,wx0,wx1,wy0,wy1);   // 河湖与海同色, 盖在陆地色块上
+      try{
+        drawLand(cand,wx0,wx1,wy0,wy1);
+        drawWater(fine,wx0,wx1,wy0,wy1);   // 河湖与海同色, 盖在陆地色块上
+      }catch(e){ console.error("副本渲染失败 k="+k,e) }
     }
   }
   if(hovG>=0){
@@ -669,6 +679,15 @@ cv.addEventListener("touchend",e=>{
 },{passive:false});
 cv.addEventListener("touchstart",e=>{if(e.touches.length>=1)interact()},{passive:true});
 // ---------- 启动 ----------
+// 任何运行时错误直接显示到 HUD, 方便远程定位问题
+window.addEventListener("error",e=>{
+  hud.textContent="运行错误: "+(e.message||e.type)+" @"+(e.lineno||"?")+"行";
+  hud.style.background="rgba(255,220,200,.95)";
+});
+window.addEventListener("unhandledrejection",e=>{
+  hud.textContent="异步错误: "+((e.reason&&e.reason.message)||e.reason||"unknown");
+  hud.style.background="rgba(255,220,200,.95)";
+});
 (async function(){
   const T0=performance.now();
   try{
@@ -677,6 +696,7 @@ cv.addEventListener("touchstart",e=>{if(e.touches.length>=1)interact()},{passive
     hud.textContent="建索引…";await yieldUI();
     buildGrid();
     resize();
+    startSnapBuild();   // 数据就绪即开始渐进构建快照(不依赖首帧渲染成功)
     const el=((performance.now()-T0)/1000).toFixed(1);
     hud.textContent="世界底图 · 版块 "+GM.size+" · 行政单元 "+nf+" · 拖动平移 / 滚轮缩放 / 双击复位 (加载 "+el+"s)";
   }catch(err){

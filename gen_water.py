@@ -196,7 +196,9 @@ jsb = json.dumps(meta, separators=(',', ':')).encode()
 hdr = bytearray(b"WMWAT1\0\0") + struct.pack('<I', len(jsb)) + jsb
 while len(hdr) % 4: hdr.append(0)
 
-raw = bytes(hdr) + BL1 + BL2 + BR1 + BR2
+raw = bytes(hdr) + BL1 + BL2 + BR1
+while len(raw) % 4: raw += b'\0'   # BR1 尾部(宽度字节)后补齐 4 字节对齐, 否则浏览器 Float32Array 视图会 RangeError
+raw += BR2
 data = gzip.compress(raw, 9)
 open('/Users/sha/Downloads/city-war/static/map/map_water.bin', 'wb').write(data)
 print(f"map_water.bin: {len(data)} bytes  md5={hashlib.md5(data).hexdigest()}  (原始 {len(raw)})")
