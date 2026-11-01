@@ -441,6 +441,7 @@ function startSnapBuild(){
 }
 function pumpSnap(){
   const j=snapJob;if(!j)return;
+  if(idleT){ requestAnimationFrame(pumpSnap); return; }   // 交互期间让路, 空闲后再继续构建
   const t0=performance.now();
   const sCtx=ctx,sOx=OX,sOy=oy,sSc=scale,sFRr=FRr,sROFFr=ROFFr,sCr=Cr;
   ctx=j.sc;OX=0;oy=0;scale=1;FRr=FR;ROFFr=ROFF;Cr=C;   // 快照用精版几何
@@ -523,7 +524,9 @@ function draw(){
           drawWater(fine,wx0,wx1,wy0,wy1);   // 河湖与海同色, 盖在陆地色块上
         }catch(e){ console.error("副本渲染失败 k="+k,e) }
       }
-      if(fine&&lastFine&&(scale!==lastFS.scale||ox!==lastFS.ox||oy!==lastFS.oy)){   // 烘焙精版帧(视图有变才重烤, 缓存不含悬停层)
+      if(lastFine&&(scale!==lastFS.scale||ox!==lastFS.ox||oy!==lastFS.oy)&&(fine||lastFS.scale<=0)){
+        // 烘焙缓存帧: 精版空闲且视图有变才重烤; 首次交互无缓存时把当前帧(粗版)也先烘焙,
+        // 后续刻度即改走贴图, 消除"第一次缩放卡一段时间"
         const lc=lastFine.getContext("2d");
         lc.setTransform(1,0,0,1,0,0);
         lc.clearRect(0,0,lastFine.width,lastFine.height);
