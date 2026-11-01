@@ -20,11 +20,12 @@ font:13px/1.5 "Songti SC","STSong",serif;pointer-events:none;z-index:9;border-ra
 <script>
 "use strict";
 const W=4096, PPR=W/(2*Math.PI);
-const YTOP=Math.log(Math.tan(Math.PI/4+(78*Math.PI/180)/2));   // 数据坐标系原点: y=0 对应 78°N
-const VTOP=Math.log(Math.tan(Math.PI/4+(85*Math.PI/180)/2));   // 视图上下限 ±85°: 墨卡托在 90° 处 y→∞, 投影极限即 85.05°, 90N/S 不可达
-const H=Math.round(2*VTOP*PPR);   // 视图总高 = Y(-85)-Y(85)(数据坐标系), 含南极洲; 数据本体不动, 仅视图延伸
+const VTOP=Math.log(Math.tan(Math.PI/4+(85*Math.PI/180)/2));   // 北界 85°N(墨卡托投影极限 85.05°, 90° 处 y→∞ 不可达)
+const VBOT=-Math.log(Math.tan(Math.PI/4+(60*Math.PI/180)/2));  // 南界 60°S(南极洲已删, 再往南只有海)
+const H=Math.round((VTOP-VBOT)*PPR);
+const Y_SHIFT=(VTOP-Math.log(Math.tan(Math.PI/4+(78*Math.PI/180)/2)))*PPR;  // 数据原点平移量: 二进制数据 y=0 对应 78°N, 视图原点改在 85°N, 加载时全体 y += Y_SHIFT(≈+573px)
 function X(lon){return (lon+180)*Math.PI/180*PPR}
-function Y(lat){const t=Math.max(-85,Math.min(85,lat));return (YTOP-Math.log(Math.tan(Math.PI/4+(t*Math.PI/180)/2)))*PPR}
+function Y(lat){const t=Math.max(-60,Math.min(85,lat));return (VTOP-Math.log(Math.tan(Math.PI/4+(t*Math.PI/180)/2)))*PPR}
 const PAL=["#f3f0e7","#f0ede3","#f4f1e9","#efece2","#f2efe5","#edeade","#f1eee4","#eeebdf"];
 const HOV="rgba(140,158,128,.55)";
 const cv=document.getElementById("cv");
@@ -40,6 +41,7 @@ let BOX,FR,ROFF,C,FR2,ROFF2,C2,FRr,ROFFr,Cr,nf=0;
 let WB,WF,WROFF,WC,WB2,WF2,WROFF2,WC2,RB,RF,RC,RW1,RB2,RF2,RC2,RW2,nl=0,nriv=0,nriv2=0;
 const GM=new Map();
 const CIDv=[];
+let ATAI=-1;   // 南极洲单元序号(应用户要求整个删除, 不参与绘制与高亮)
 let DATAV="0b151c46a52757b6ea65c6bb99aeb3e5";  // 数据指纹（对应 gzip 压缩版）；变化则自动重新下载
 let WATERV="a684fa86757ab29552e6ef9131aa4a0d";  // 水体数据指纹；变化则自动重新下载
 // 注: map_world.bin 现为 gzip 流（内容 magic 1f8b），下载后先解压再解析；兼容旧未压缩版(WMAP1)
@@ -228,6 +230,7 @@ async function loadData(){
   for(let i=0;i<nf;i++){
     const p=meta.meta[i];
     CIDv[i]=p.g;
+    if(p.gn==="南极洲")ATAI=i;
     let g=GM.get(p.g);
     if(!g){g={name:p.gn,region:p.region,area:0,mem:[]};GM.set(p.g,g)}
     g.area+=p.area||0;
@@ -242,6 +245,11 @@ async function loadData(){
     g.lbl={x:(BOX[big*4]+BOX[big*4+2])/2,y:(BOX[big*4+1]+BOX[big*4+3])/2,
            w:Math.min(BOX[big*4+2]-BOX[big*4],BOX[big*4+3]-BOX[big*4+1])};
   }
+  // 坐标原点平移: 数据 y=0 在 78°N, 视图 y=0 在 85°N, 全体 y 坐标加偏移(否则 78°N 以北的格陵兰/北极群岛被裁掉)
+  for(let k=1;k<C.length;k+=2)C[k]+=Y_SHIFT;
+  for(let k=1;k<C2.length;k+=2)C2[k]+=Y_SHIFT;
+  for(let i=0;i<nf;i++){BOX[i*4+1]+=Y_SHIFT;BOX[i*4+3]+=Y_SHIFT}
+  for(const g of GM.values())g.lbl.y+=Y_SHIFT;
   // ---------- 水体解析 ----------
   if(wbuf){
     try{
@@ -276,6 +284,15 @@ async function loadData(){
       RF2=new Int32Array(rbuf,nriv2*16,nriv2+1);
       RC2=new Float32Array(rbuf,nriv2*16+(nriv2+1)*4,wm.rivpts2*2);
       RW2=new Uint8Array(rbuf,nriv2*16+(nriv2+1)*4+wm.rivpts2*8,nriv2);
+      // 水体坐标同步平移(与陆地同原点)
+      for(let k=1;k<WC.length;k+=2)WC[k]+=Y_SHIFT;
+      for(let k=1;k<WC2.length;k+=2)WC2[k]+=Y_SHIFT;
+      for(let k=1;k<RC.length;k+=2)RC[k]+=Y_SHIFT;
+      for(let k=1;k<RC2.length;k+=2)RC2[k]+=Y_SHIFT;
+      for(let i=0;i<nl;i++){WB[i*4+1]+=Y_SHIFT;WB[i*4+3]+=Y_SHIFT}
+      for(let i=0;i<wm.nl2;i++){WB2[i*4+1]+=Y_SHIFT;WB2[i*4+3]+=Y_SHIFT}
+      for(let i=0;i<nriv;i++){RB[i*4+1]+=Y_SHIFT;RB[i*4+3]+=Y_SHIFT}
+      for(let i=0;i<nriv2;i++){RB2[i*4+1]+=Y_SHIFT;RB2[i*4+3]+=Y_SHIFT}
     }catch(e){ console.warn("水体数据解析失败",e); }
   }
 }
@@ -373,6 +390,7 @@ function drawLand(cand,wx0,wx1,wy0,wy1){
   // 按主题色分桶, 每桶合并为一条路径只做一次填充+描边(大幅减少状态切换)
   const BK=[[],[],[],[],[],[],[],[]];
   const put=i=>{
+    if(i===ATAI)return;   // 南极洲已删
     const a=BOX[i*4],b=BOX[i*4+1],e=BOX[i*4+2],d=BOX[i*4+3];
     if(e<wx0||a>wx1||d<wy0||b>wy1)return;
     const wpx=(e-a)*scale,hpx=(d-b)*scale;
@@ -395,7 +413,7 @@ let snap=null,snapJob=null;
 function paintLandChunk(g,from,to){
   g.lineWidth=.6;g.strokeStyle="rgba(70,68,60,.35)";g.lineJoin="round";
   const BK=[[],[],[],[],[],[],[],[]];
-  for(let i=from;i<to;i++)BK[CIDv[i]%8].push(i);
+  for(let i=from;i<to;i++){if(i!==ATAI)BK[CIDv[i]%8].push(i)}
   for(let b=0;b<8;b++){
     const arr=BK[b];if(!arr.length)continue;
     g.beginPath();
@@ -537,8 +555,10 @@ function draw(){
   }
   if(hovG>=0){
     const g=GM.get(hovG);
-    if(g){OX=hovOX;FRr=FR;ROFFr=ROFF;Cr=C;ctx.fillStyle=HOV;
-      for(const i of g.mem){strokePoly(i);ctx.fill()}}
+    if(g&&g.name!=="南极洲"){   // 南极洲已删, 不做高亮
+      OX=hovOX;FRr=FR;ROFFr=ROFF;Cr=C;ctx.fillStyle=HOV;
+      for(const i of g.mem){if(i!==ATAI){strokePoly(i);ctx.fill()}}
+    }
   }
   drawScale(vw,vh);
 }
@@ -584,7 +604,7 @@ function drawWater(z,wx0,wx1,wy0,wy1){
 const SCALE_STEPS=[5000,3000,2000,1000,500,300,200,100,50,30,20,10,5,2,1];
 function drawScale(vw,vh){
   const wx=(vw/2-ox)/scale, wy=(vh/2-oy)/scale;
-  const ym=YTOP-wy/PPR;
+  const ym=VTOP-wy/PPR;
   const lat=(2*Math.atan(Math.exp(ym))-Math.PI/2)*180/Math.PI;
   const kmPerPx=111.32*Math.cos(lat*Math.PI/180)/(PPR*Math.PI/180*scale);
   let km=SCALE_STEPS[SCALE_STEPS.length-1];
@@ -626,7 +646,7 @@ cv.addEventListener("mousemove",e=>{
   if(drag){ox+=e.clientX-sx0;oy+=e.clientY-sy0;sx0=e.clientX;sy0=e.clientY;clampView();interact();return}
   const lon=normLon((e.clientX-ox)/scale/W*360-180);
   const my=(e.clientY-oy)/scale;
-  const ym=YTOP-my/PPR;
+  const ym=VTOP-my/PPR;
   const lat=(2*Math.atan(Math.exp(ym))-Math.PI/2)*180/Math.PI;
   const i=pick(lon,lat);
   const g=i>=0?GM.get(CIDv[i]):null;
@@ -678,7 +698,7 @@ cv.addEventListener("touchend",e=>{
     if(!tMoved&&Date.now()-tT0<350&&tDrag){
       const x=e.changedTouches[0].clientX,y=e.changedTouches[0].clientY;
       const lon=normLon((x-ox)/scale/W*360-180);
-      const ym=YTOP-((y-oy)/scale)/PPR;
+      const ym=VTOP-((y-oy)/scale)/PPR;
       const lat=(2*Math.atan(Math.exp(ym))-Math.PI/2)*180/Math.PI;
       const i=pick(lon,lat);
       if(i>=0){
