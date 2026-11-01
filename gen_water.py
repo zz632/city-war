@@ -101,7 +101,7 @@ for f in lakes['features']:
         fr, cr = [], []
         ok = True
         for ring in poly:
-            p = proj_ring(ring, 0.8)
+            p = proj_ring(ring, 0.3)
             if p is None:
                 if len(ring) >= 4: ok = False
                 break
@@ -131,7 +131,7 @@ for f in rivers['features']:
     elif g['type'] == 'MultiLineString': lines = g['coordinates']
     else: continue
     for line in lines:
-        for s in proj_line(line, 0.8):
+        for s in proj_line(line, 0.3):
             w = 2 if sw >= 0.9 else (1 if sw >= 0.5 else 0)
             R_full.append(s); RW.append(w)
             c = rdp(s, 3.0)
