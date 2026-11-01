@@ -518,39 +518,37 @@ function draw(){
   drawScale(vw,vh);
 }
 // ---------- 水体绘制（湖泊面 evenodd 填充 + 河流分级描边, 均为海色） ----------
+// 水体恒用精版: 粗版缺 943 个小湖, 粗/精切换会让湖一闪一闪(陆地↔海洋); 精版水体仅 7.5 万点, 成本可忽略
+// 湖泊逐个 evenodd 填充(与快照一致): 批量合并路径时重叠湖会 XOR 成陆地色
 const SEAC="#a6cbe2", RIVW=[1.1,1.7,2.5];
 function drawWater(z,wx0,wx1,wy0,wy1){
   if(!nl&&!nriv)return;
   ctx.fillStyle=SEAC;ctx.strokeStyle=SEAC;ctx.lineCap="round";ctx.lineJoin="round";
   if(nl){
-    const WFr=z?WF:WF2, WOr=z?WROFF:WROFF2, WCc=z?WC:WC2, WBb=z?WB:WB2, n=z?nl:WB2.length/4;
-    // 全部可见湖合并为一条路径, 一次 evenodd 填充
-    ctx.beginPath();let any=false;
-    for(let i=0;i<n;i++){
-      const a=WBb[i*4],b=WBb[i*4+1],e=WBb[i*4+2],d=WBb[i*4+3];
+    for(let i=0;i<nl;i++){
+      const a=WB[i*4],b=WB[i*4+1],e=WB[i*4+2],d=WB[i*4+3];
       if(e<wx0||a>wx1||d<wy0||b>wy1)continue;
-      for(let r=WFr[i];r<WFr[i+1];r++){
-        const s=WOr[r]*2,t=WOr[r+1]*2;
-        ctx.moveTo(WCc[s]*scale+OX,WCc[s+1]*scale+oy);
-        for(let p=s+2;p<t;p+=2)ctx.lineTo(WCc[p]*scale+OX,WCc[p+1]*scale+oy);
+      ctx.beginPath();
+      for(let r=WF[i];r<WF[i+1];r++){
+        const s=WROFF[r]*2,t=WROFF[r+1]*2;
+        ctx.moveTo(WC[s]*scale+OX,WC[s+1]*scale+oy);
+        for(let p=s+2;p<t;p+=2)ctx.lineTo(WC[p]*scale+OX,WC[p+1]*scale+oy);
         ctx.closePath();
       }
-      any=true;
+      ctx.fill("evenodd");
     }
-    if(any)ctx.fill("evenodd");
   }
   if(nriv){
-    const RFf=z?RF:RF2, RCc=z?RC:RC2, RWw=z?RW1:RW2, RBb=z?RB:RB2, n=z?nriv:nriv2;
     // 按线宽分 3 桶批量描边, 减少状态切换
     for(let w=0;w<3;w++){
       ctx.beginPath();let any=false;
-      for(let i=0;i<n;i++){
-        if((RWw[i]||0)!==w)continue;
-        const a=RBb[i*4],b=RBb[i*4+1],e=RBb[i*4+2],d=RBb[i*4+3];
+      for(let i=0;i<nriv;i++){
+        if((RW1[i]||0)!==w)continue;
+        const a=RB[i*4],b=RB[i*4+1],e=RB[i*4+2],d=RB[i*4+3];
         if(e<wx0||a>wx1||d<wy0||b>wy1)continue;
-        const s=RFf[i]*2,t=RFf[i+1]*2;
-        ctx.moveTo(RCc[s]*scale+OX,RCc[s+1]*scale+oy);
-        for(let p=s+2;p<t;p+=2)ctx.lineTo(RCc[p]*scale+OX,RCc[p+1]*scale+oy);
+        const s=RF[i]*2,t=RF[i+1]*2;
+        ctx.moveTo(RC[s]*scale+OX,RC[s+1]*scale+oy);
+        for(let p=s+2;p<t;p+=2)ctx.lineTo(RC[p]*scale+OX,RC[p+1]*scale+oy);
         any=true;
       }
       if(any){ctx.lineWidth=RIVW[w]||1.1;ctx.stroke()}
