@@ -1,0 +1,1542 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>城池战争 · 地图模式</title>
+<style>
+html,body{margin:0;height:100%;background:#a6cbe2;overflow:hidden;font-family:"Songti SC","STSong","SimSun",serif}
+#cv{display:block;cursor:grab;touch-action:none}
+#hud{position:fixed;top:12px;left:12px;background:rgba(250,249,244,.93);border:1px solid #b5b0a4;
+padding:6px 12px;font:13px/1.6 "Songti SC","STSong","SimSun",serif;color:#26241f;pointer-events:none;letter-spacing:.5px;z-index:5}
+#tip{position:fixed;display:none;background:rgba(32,30,26,.92);color:#f4f1e8;padding:8px 12px;
+font:13px/1.6 "Songti SC","STSong",serif;pointer-events:none;z-index:9;border-radius:3px;max-width:280px;box-shadow:0 3px 12px rgba(0,0,0,.25)}
+#tip .cd{color:#cfc9b8;font-size:12px}
+#tip .pickrow{display:flex;align-items:center;gap:5px;margin-top:2px}
+#tip .dot{display:inline-block;width:9px;height:9px;border-radius:50%;flex:none}
+/* ---- 灵动岛 ---- */
+#island{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:20;
+background:rgba(22,20,17,.92);color:#f4f1e8;border-radius:22px;box-shadow:0 4px 18px rgba(0,0,0,.3);
+transition:max-width .35s ease,max-height .35s ease,border-radius .35s ease;
+max-width:180px;max-height:44px;overflow:hidden;width:max-content;min-width:150px}
+#island.open{max-width:min(94vw,420px);max-height:min(78vh,560px);border-radius:18px}
+#islandPill{display:flex;align-items:center;gap:10px;padding:10px 18px;cursor:pointer;user-select:none;
+white-space:nowrap;font-size:14px;letter-spacing:1px}
+#islandPill .pi{font-size:16px}
+#islandPill b{font-weight:normal}
+#islandPill .stat{color:#bdb7a8;font-size:12.5px}
+#islandBody{padding:2px 16px 14px;font-size:13px;line-height:1.7}
+#island.open #islandBody{display:block}
+#islandBody[hidden]{display:none}
+#islandBody h4{margin:8px 0 3px;font-size:12px;color:#bdb7a8;font-weight:normal;letter-spacing:2px}
+#islandBody .row{display:flex;align-items:center;gap:6px;margin:3px 0}
+#islandBody .dot{width:11px;height:11px;border-radius:50%;flex:none;border:1px solid rgba(255,255,255,.35)}
+#islandBody .pid-tag{color:#9d978a;font-size:12px;margin-left:auto}
+#islandBody button{font-family:inherit;font-size:13px;padding:6px 14px;margin:4px 4px 0 0;cursor:pointer;
+background:#4a5c44;color:#f4f1e8;border:none;border-radius:4px}
+#islandBody button:disabled{background:#55514a;color:#8a857c;cursor:default}
+#islandBody button.warn{background:#8c3b2e}
+#islandBody button.ghost{background:#3a3730}
+#islandBody .swatches{display:flex;gap:7px;flex-wrap:wrap;margin:6px 0 2px}
+#islandBody .sw{width:26px;height:26px;border-radius:50%;cursor:pointer;border:2px solid transparent;position:relative}
+#islandBody .sw.sel{border-color:#f4f1e8}
+#islandBody .sw.taken{opacity:.35;cursor:not-allowed}
+#islandBody .statgrid{display:grid;grid-template-columns:1fr 1fr;gap:2px 14px;margin:4px 0}
+#islandBody .statgrid b{font-weight:normal;color:#fff}
+#islandBody .statgrid span{color:#bdb7a8;font-size:12px}
+#islandBody .rid{display:flex;align-items:center;gap:8px}
+#islandBody .rid b{font-size:20px;letter-spacing:4px;font-family:Menlo,Consolas,monospace}
+/* ---- 悬浮提示 / 横幅 ---- */
+#banner{position:fixed;top:60px;left:50%;transform:translateX(-50%);z-index:18;display:none;
+background:rgba(60,52,40,.92);color:#f7f3e8;padding:7px 20px;border-radius:3px;font-size:14px;letter-spacing:1px;max-width:86vw;text-align:center}
+#conflictBanner{position:fixed;top:100px;left:50%;transform:translateX(-50%);z-index:18;display:none;
+background:rgba(150,40,28,.95);color:#fff;padding:8px 20px;border-radius:4px;font-size:13.5px;max-width:88vw;text-align:center;line-height:1.6}
+/* ---- 操作面板（桌面右侧 / 手机底部卡） ---- */
+#panel{position:fixed;right:14px;top:70px;width:290px;max-height:calc(100vh - 180px);overflow-y:auto;display:none;
+background:rgba(250,249,244,.97);border:1px solid #b5b0a4;border-radius:4px;z-index:15;padding:12px 14px;
+font-size:13px;color:#26241f;box-shadow:0 3px 14px rgba(0,0,0,.15);line-height:1.7}
+#panel h3{margin:0 0 4px;font-size:16px}
+#panel .dim{color:#6b675c;font-size:12px}
+#panel .own{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:-1px}
+#panel button{font-family:inherit;font-size:13px;padding:6px 12px;margin:3px 4px 3px 0;cursor:pointer;
+background:#3e4a3a;color:#f4f1e8;border:none;border-radius:3px}
+#panel button:disabled{background:#a9a79d;cursor:default}
+#panel button.warn{background:#8c3b2e}
+#panel button.ghost{background:#6b675c}
+#panel input{font-family:inherit;font-size:13px;padding:5px 6px;width:95px;border:1px solid #b5b0a4;border-radius:3px}
+#panel .bitem{border-top:1px dashed #d5d1c4;padding:5px 0;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+#panel .bitem .nm{min-width:64px}
+#panel .tag{display:inline-block;background:#e7e3d6;border-radius:2px;padding:0 6px;margin-right:4px;font-size:12px}
+#panel .close{position:absolute;right:8px;top:6px;border:none;background:none;font-size:16px;color:#6b675c;cursor:pointer;padding:2px 6px}
+/* 手机：面板变底部卡片 */
+@media (max-width:720px), (pointer:coarse){
+  #panel{left:10px;right:10px;top:auto;bottom:10px;width:auto;max-height:46vh}
+  #chatBox{width:auto;right:10px;bottom:calc(46vh + 20px)}
+}
+/* ---- 聊天 ---- */
+#chatBox{position:fixed;left:14px;bottom:14px;width:300px;z-index:14;display:flex;flex-direction:column;
+background:rgba(250,249,244,.96);border:1px solid #b5b0a4;border-radius:4px;box-shadow:0 3px 14px rgba(0,0,0,.12)}
+#chatHead{padding:6px 12px;font-size:13px;color:#3e4a3a;border-bottom:1px solid #d5d1c4;cursor:pointer;user-select:none}
+#chatBody{display:none;flex-direction:column}
+#chatBody.open{display:flex}
+#msgs{height:160px;overflow-y:auto;padding:6px 10px;font-size:13px;color:#26241f;line-height:1.5}
+#msgs .who{color:#3e4a3a;font-weight:bold}
+#chatRow{display:flex;border-top:1px solid #d5d1c4}
+#chatIn{flex:1;border:none;padding:8px 10px;font-family:inherit;font-size:13px;background:transparent;outline:none}
+#chatSend{border:none;background:#3e4a3a;color:#f4f1e8;padding:0 14px;cursor:pointer;font-family:inherit}
+/* ---- 提示气泡 ---- */
+#toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%);display:none;z-index:30;
+background:rgba(140,59,46,.94);color:#fff;padding:8px 18px;border-radius:3px;font-size:14px;max-width:86vw;text-align:center}
+/* ---- 主题色弹窗 ---- */
+#colorModal{position:fixed;inset:0;z-index:40;display:none;background:rgba(20,18,15,.55)}
+#colorModal .card{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+background:#faf9f4;border-radius:8px;padding:22px 26px;box-shadow:0 8px 40px rgba(0,0,0,.35);text-align:center;max-width:92vw}
+#colorModal h3{margin:0 0 4px;font-size:17px}
+#colorModal .dim{color:#6b675c;font-size:12.5px;margin-bottom:12px}
+#colorModal .grid{display:grid;grid-template-columns:repeat(6,44px);gap:10px;justify-content:center}
+#colorModal .sw{width:44px;height:44px;border-radius:50%;cursor:pointer;border:3px solid transparent;position:relative}
+#colorModal .sw.sel{border-color:#26241f}
+#colorModal .sw.taken{opacity:.3;cursor:not-allowed}
+#colorModal .sw.taken::after{content:"✕";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="hud">载入中…</div>
+<div id="tip"></div>
+
+<!-- 灵动岛 -->
+<div id="island">
+  <div id="islandPill" onclick="toggleIsland()">
+    <span class="pi">🏰</span><b id="pillText">等待中…</b><span class="stat" id="pillStat"></span>
+    <span style="font-size:11px;color:#8a857c;margin-left:2px" id="pillHint">展开</span>
+  </div>
+  <div id="islandBody" hidden></div>
+</div>
+
+<div id="banner"></div>
+<div id="conflictBanner"></div>
+<div id="panel"></div>
+<div id="chatBox">
+  <div id="chatHead">💬 外交频道（点此展开/收起）</div>
+  <div id="chatBody">
+    <div id="msgs"></div>
+    <div id="chatRow">
+      <input id="chatIn" placeholder="对全场发言…" maxlength="200">
+      <button id="chatSend">发送</button>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+<div id="colorModal">
+  <div class="card">
+    <h3>选择你的主题色</h3>
+    <div class="dim">一个颜色只能一人使用 · 先到先得 · 蓝色与白色留给海洋和大地</div>
+    <div class="grid" id="colorGrid"></div>
+    <div style="margin-top:14px"><button class="ghost" style="font-family:inherit;padding:6px 16px;border:none;border-radius:3px;background:#6b675c;color:#f4f1e8;cursor:pointer" onclick="closeColorModal()">稍后再说</button></div>
+  </div>
+</div>
+<script src="/static/js/socket.io.min.js"></script>
+<script>
+"use strict";
+const W=4096, PPR=W/(2*Math.PI);
+const VTOP=Math.log(Math.tan(Math.PI/4+(85*Math.PI/180)/2));
+const VBOT=-Math.log(Math.tan(Math.PI/4+(60*Math.PI/180)/2));
+const H=Math.round((VTOP-VBOT)*PPR);
+const Y_SHIFT=(VTOP-Math.log(Math.tan(Math.PI/4+(78*Math.PI/180)/2)))*PPR;
+function X(lon){return (lon+180)*Math.PI/180*PPR}
+function Y(lat){const t=Math.max(-60,Math.min(85,lat));return (VTOP-Math.log(Math.tan(Math.PI/4+(t*Math.PI/180)/2)))*PPR}
+const BASE_LAND="#f3f0e7";   // 无主地白（米白）
+const HOV="rgba(60,52,40,.35)";
+const SELC="rgba(255,255,255,.85)";
+const cv=document.getElementById("cv");
+let ctx=cv.getContext("2d");
+const hud=document.getElementById("hud"),tip=document.getElementById("tip");
+const DPR=Math.min(2,window.devicePixelRatio||1);
+const yieldUI=()=>new Promise(r=>setTimeout(r,0));
+const IS_TOUCH=matchMedia("(pointer:coarse)").matches||"ontouchstart" in window;
+
+// 主题色池（与服务端 engine.THEME_COLORS 一致）
+const THEME_COLORS=["#d32f2f","#f57c00","#fbc02d","#388e3c","#00896b","#7b1fa2",
+                    "#c2185b","#e91e63","#795548","#455a64","#212121","#827717"];
+const COLOR_NAMES={["#d32f2f"]:"红","#f57c00":"橙","#fbc02d":"黄","#388e3c":"绿","#00896b":"青绿","#7b1fa2":"紫",
+                   ["#c2185b"]:"品红","#e91e63":"玫红","#795548":"棕","#455a64":"深灰","#212121":"黑","#827717":"橄榄"};
+
+// ---------- URL 参数 / socket ----------
+const QS=new URLSearchParams(location.search);
+const ROOM_ID=(location.pathname.split("/").pop()||"").trim();
+const MY_PID=QS.get("pid")||(JSON.parse(localStorage.getItem("citywar_last_game")||"null")||{}).pid||"";
+const socket=io();
+function toast(msg){
+  const t=document.getElementById("toast");
+  t.textContent=msg;t.style.display="block";
+  clearTimeout(t._tm);t._tm=setTimeout(()=>t.style.display="none",2600);
+}
+function esc(s){return String(s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+function fmt(n){return Math.round(n).toLocaleString()}
+
+// ---------- 地块元数据 ----------
+const REG={};
+async function loadRegions(){
+  const r=await fetch("/game/mapmode/regions.json");
+  const j=await r.json();
+  for(const k in j)REG[+k]=j[k];
+}
+
+// ---------- 游戏状态 ----------
+let PHASE="loading", WORLD={}, PLAYERS={}, COLORS={}, MY=null, ARMIES=[], BATTLES={};
+let SEL=-1, SEL_ARMY=0, MOVE_MODE=null, MY_PICK=-1;
+let PICKS={}, CONFLICTS=[], HOST_ID="";
+let ISLAND_OPEN=true;
+let INTEL={};   // i -> {info, ts}（他人地块模糊情报缓存）
+function pColor(pid){
+  if(pid==null)return null;
+  if(COLORS[pid])return COLORS[pid];
+  const p=PLAYERS[pid];
+  return p&&p.theme_color?p.theme_color:null;
+}
+function myColor(){return pColor(MY_PID)}
+function isHost(){return MY_PID&&HOST_ID===MY_PID}
+
+// ---------- socket 事件 ----------
+socket.on("mm_state",d=>{
+  HOST_ID=d.host_id||HOST_ID;
+  if(d.players)PLAYERS=d.players;
+  if(d.world)WORLD=d.world;
+  if(d.my){
+    MY=d.my;
+    COLORS=d.my.colors||COLORS;
+    PHASE=d.my.phase;
+    if(d.my.me)MY_PICK=d.my.me.picked;
+  }
+  if(d.picks)applyPicks(d.picks);
+  renderIsland();refreshTip();renderPanel();
+  if(PHASE==="picking")showBanner("选地阶段：点击地图选择出生地 · 一人一块");
+  if(PHASE==="playing")focusMyRegion();
+});
+socket.on("mm_delta",d=>{
+  if(d.owners)for(const k in d.owners){
+    const v=d.owners[k];
+    if(v)WORLD[k]=v;else delete WORLD[k];
+  }
+  if(d.players){
+    for(const pid in d.players){
+      PLAYERS[pid]=Object.assign(PLAYERS[pid]||{},d.players[pid]);
+      if(MY&&MY.me&&pid===String(MY.me.pid)&&PLAYERS[pid].money!==undefined)MY.me.money=PLAYERS[pid].money;
+    }
+    for(const k in INTEL)INTEL[k].ts=0;  // 情报过期
+  }
+  if(d.armies)ARMIES=d.armies;
+  if(d.battles)BATTLES=d.battles;
+  if(d.phase)PHASE=d.phase;
+  if(d.phase==="finished")showBanner(d.winner?("游戏结束 · 胜者："+((PLAYERS[d.winner]||{}).name||"?")):"游戏结束");
+  renderIsland();refreshTip();renderPanel();schedule();
+});
+socket.on("mm_phase",d=>{
+  PHASE=d.phase;
+  if(d.phase==="playing"){
+    hideBanner();showBanner("游戏开始！",2600);setTimeout(hideBanner,2800);
+    focusMyRegion();
+  }
+  renderIsland();refreshTip();renderPanel();schedule();
+});
+socket.on("mm_picks",d=>applyPicks(d));
+function applyPicks(d){
+  PICKS=d.picks||PICKS;
+  if(d.colors)COLORS=d.colors;
+  if(d.names)for(const pid in d.names){if(PLAYERS[pid])PLAYERS[pid].name=d.names[pid]}
+  CONFLICTS=d.conflicts||[];
+  if(!CONFLICTS.length)hideConflict();
+  else renderIsland();
+  renderIsland();schedule();
+}
+socket.on("mm_pick_ok",d=>{
+  MY_PICK=d.region;
+  showBanner("已选定出生地，等待房主开始…");
+  if(!myColor())openColorModal();
+  renderIsland();schedule();
+});
+socket.on("mm_conflict",d=>{
+  if(d.picks)applyPicks(d.picks);
+  if(d.conflicts){
+    showConflict(d.message||"选地冲突，请重新选地");
+    toast("选地冲突！请点击地图重新选地");
+  }else{
+    toast(d.message||"无法开始");
+  }
+  renderIsland();
+});
+socket.on("mm_region_info",d=>{
+  INTEL[d.i]={info:d,ts:Date.now()};
+  refreshTip();
+});
+socket.on("mm_error",d=>toast(d.message||"操作失败"));
+socket.on("error_msg",d=>toast(d.message||"错误"));
+socket.on("chat_message",d=>{
+  const m=document.getElementById("msgs");
+  const div=document.createElement("div");
+  div.innerHTML='<span class="who">'+esc(d.player_name)+':</span> '+esc(d.message);
+  m.appendChild(div);m.scrollTop=m.scrollHeight;
+});
+socket.on("connect",()=>{socket.emit("mm_join",{room_id:ROOM_ID,player_id:MY_PID})});
+
+// ---------- 灵动岛 ----------
+const islandEl=document.getElementById("island");
+const pillText=document.getElementById("pillText");
+const pillStat=document.getElementById("pillStat");
+const islandBody=document.getElementById("islandBody");
+function toggleIsland(){ISLAND_OPEN=!ISLAND_OPEN;renderIsland()}
+function openIsland(){ISLAND_OPEN=true;renderIsland()}
+function closeIsland(){ISLAND_OPEN=false;renderIsland()}
+function myStats(){
+  const mine=MY&&MY.mine||{};
+  let pop=0,army=0,land=0;
+  for(const k in mine){
+    const r=mine[k];
+    if(r.owner===MY_PID){land++;pop+=r.pop||0}
+    if(r.garrison===MY_PID)army+=r.troops||0;
+  }
+  for(const a of ARMIES)if(a.pid===MY_PID)army+=a.troops;
+  return {money:MY&&MY.me?MY.me.money:0,pop,army,land};
+}
+function renderIsland(){
+  islandEl.classList.toggle("open",ISLAND_OPEN);
+  islandBody.hidden=!ISLAND_OPEN;
+  document.getElementById("pillHint").textContent=ISLAND_OPEN?"收起":"展开";
+  const st=myStats();
+  // 收起态胶囊
+  if(PHASE==="picking"){
+    const done=Object.keys(PICKS).length;
+    pillText.textContent=CONFLICTS.length?"冲突重选":"选地中";
+    pillStat.textContent="已选 "+done+" 人";
+  }else if(PHASE==="playing"||PHASE==="finished"){
+    pillText.textContent="💰"+fmt(st.money);
+    pillStat.textContent="👥"+fmt(st.pop)+" ⚔"+fmt(st.army)+" 🗺"+st.land;
+  }else{
+    pillText.textContent="等待中…";pillStat.textContent="";
+  }
+  if(!ISLAND_OPEN)return;
+  // 展开态
+  let h="";
+  if(PHASE==="picking"){
+    h+='<h4>选择主题色（先到先得）</h4><div class="swatches">'+colorSwatches()+'</div>';
+    h+='<h4>玩家 ('+Object.keys(PLAYERS).length+')</h4>';
+    for(const pid in PLAYERS){
+      const p=PLAYERS[pid];
+      if(p.is_spectator)continue;
+      const col=pColor(pid)||"#777";
+      const picked=PICKS[pid]!==undefined&&PICKS[pid]!==null;
+      const rn=picked&&REG[PICKS[pid]]?REG[PICKS[pid]].n:"未选地";
+      h+='<div class="row"><span class="dot" style="background:'+col+'"></span>'+esc(p.name)
+        +(pid===MY_PID?"（你）":"")
+        +'<span class="pid-tag">'+(picked?esc(rn):"…")+(CONFLICTS.includes(PICKS[pid])?" ⚠":"")+'</span></div>';
+    }
+    if(isHost()){
+      h+='<div style="margin-top:10px"><button onclick="hostStart()">▶ 开始游戏</button>'
+        +'<span class="dim" style="color:#9d978a;font-size:12px;margin-left:6px">重复选地将要求重选</span></div>';
+    }else{
+      h+='<div style="color:#9d978a;font-size:12px;margin-top:8px">等待房主开始游戏…</div>';
+    }
+    h+='<div style="margin-top:6px"><button class="ghost" onclick="toggleSpectate()">转观战</button></div>';
+  }else if(PHASE==="playing"||PHASE==="finished"){
+    h+='<div class="statgrid">'
+      +'<span>资金 <b>'+fmt(st.money)+'</b></span><span>人口 <b>'+fmt(st.pop)+'</b></span>'
+      +'<span>军队 <b>'+fmt(st.army)+'</b></span><span>地块 <b>'+st.land+'</b></span></div>';
+    h+='<h4>玩家</h4>';
+    for(const pid in PLAYERS){
+      const p=PLAYERS[pid];
+      const col=pColor(pid);
+      if(!col)continue;
+      const dead=p.alive===false;
+      h+='<div class="row"'+(dead?' style="opacity:.45"':'')+'><span class="dot" style="background:'+col+'"></span>'
+        +esc(p.name)+(pid===MY_PID?"（你）":"")+(dead?" · 已出局":"")
+        +(pid===HOST_ID?'<span class="pid-tag">房主</span>':'')+'</div>';
+    }
+  }else{
+    h+='<div style="color:#9d978a">连接中…</div>';
+  }
+  // 房间号邀请
+  h+='<h4>房间</h4><div class="rid"><b>'+esc(ROOM_ID)+'</b>'
+    +'<button class="ghost" onclick="copyInvite()">邀请</button>'
+    +'<button class="ghost" onclick="quitGame()">退出</button></div>';
+  islandBody.innerHTML=h;
+}
+function colorSwatches(){
+  let h="";
+  for(const c of THEME_COLORS){
+    const takenBy=Object.keys(PLAYERS).find(pid=>pid!==MY_PID&&pColor(pid)===c);
+    const mine=myColor()===c;
+    const cls="sw"+(mine?" sel":"")+(takenBy?" taken":"");
+    const title=COLOR_NAMES[c]+(takenBy?"（已被 "+esc((PLAYERS[takenBy]||{}).name||"?")+" 选用）":"");
+    h+='<div class="'+cls+'" style="background:'+c+'" title="'+title+'" onclick="pickColor(\''+c+'\')"></div>';
+  }
+  return h;
+}
+function pickColor(c){
+  socket.emit("mm_set_color",{room_id:ROOM_ID,player_id:MY_PID,color:c});
+  setTimeout(renderIsland,400);
+}
+function copyInvite(){
+  const url=location.origin+"/join?room="+ROOM_ID;
+  if(navigator.clipboard)navigator.clipboard.writeText("来玩城池战争地图模式！房间号 "+ROOM_ID+"："+url).then(()=>toast("邀请已复制"),()=>{});
+  else prompt("复制邀请:",url);
+}
+function toggleSpectate(){
+  const p=PLAYERS[MY_PID];
+  socket.emit(p&&p.is_spectator?"unspectate_join":"spectate_join",{room_id:ROOM_ID,player_id:MY_PID});
+}
+function quitGame(){location.href="/"}
+function hostStart(){
+  socket.emit("start_game",{room_id:ROOM_ID,player_id:MY_PID});
+}
+function showConflict(msg){
+  const b=document.getElementById("conflictBanner");
+  b.textContent=msg;b.style.display="block";
+}
+function hideConflict(){document.getElementById("conflictBanner").style.display="none"}
+// 桌面：鼠标移出灵动岛收起
+islandEl.addEventListener("mouseleave",()=>{if(!IS_TOUCH)closeIsland()});
+islandEl.addEventListener("mouseenter",()=>{if(!IS_TOUCH&&!ISLAND_OPEN)openIsland()});
+
+// ---------- 主题色弹窗 ----------
+const colorModal=document.getElementById("colorModal");
+function openColorModal(){
+  const g=document.getElementById("colorGrid");
+  let h="";
+  for(const c of THEME_COLORS){
+    const takenBy=Object.keys(PLAYERS).find(pid=>pid!==MY_PID&&pColor(pid)===c);
+    const cls="sw"+(myColor()===c?" sel":"")+(takenBy?" taken":"");
+    h+='<div class="'+cls+'" style="background:'+c+'" title="'+COLOR_NAMES[c]+'" onclick="modalPick(\''+c+'\')"></div>';
+  }
+  g.innerHTML=h;
+  colorModal.style.display="block";
+}
+function closeColorModal(){colorModal.style.display="none"}
+function modalPick(c){
+  socket.emit("mm_set_color",{room_id:ROOM_ID,player_id:MY_PID,color:c});
+  setTimeout(()=>{closeColorModal();renderIsland()},400);
+}
+colorModal.addEventListener("click",e=>{if(e.target===colorModal)closeColorModal()});
+
+// ---------- 悬停情报卡 ----------
+function startMoney(a){return Math.max(500,Math.round(10000*Math.sqrt(5000/Math.max(a,1))))}
+function tipHTML(i){
+  const rg=REG[i];
+  if(!rg)return "";
+  let h="<b>"+esc(rg.n)+"</b><br><span class='cd'>"+esc(rg.c)+" · ≈"+fmt(rg.a)+" km²</span>";
+  if(PHASE==="picking"){
+    h+="<br><span class='cd'>初始人口 "+fmt(rg.a*2)+" · 预计启动资金 "+fmt(startMoney(rg.a))+" 元</span>";
+    const ps=Object.keys(PICKS).filter(pid=>PICKS[pid]===i);
+    if(ps.length){
+      for(const pid of ps){
+        const col=pColor(pid)||"#777";
+        h+="<div class='pickrow'><span class='dot' style='background:"+col+"'></span>"+esc((PLAYERS[pid]||{}).name||"?")+"</div>";
+      }
+      if(ps.length>1)h+="<div style='color:#ff9d8f'>⚠ 冲突：多人选择</div>";
+    }else{
+      h+="<br><span class='cd'>未被选择 · 点击选为出生地</span>";
+    }
+    return h;
+  }
+  // playing
+  const own=WORLD[i];
+  const mineR=MY&&MY.mine&&MY.mine[i];
+  if(mineR&&(mineR.owner===MY_PID||mineR.garrison===MY_PID)){
+    h+="<br>人口 "+fmt(mineR.pop)+" · 驻军 "+fmt(mineR.troops);
+    const bl=[];
+    for(const k in mineR.b){bl.push(k+mineR.b[k])}
+    if(bl.length)h+="<br><span class='cd'>设施: "+esc(bl.join(" "))+"</span>";
+    h+="<br><span class='cd'>点击管理（征兵/建造/出兵）</span>";
+    return h;
+  }
+  if(!own){
+    const price=Math.round(rg.a*(MY&&MY.colonize_price||1));
+    h+="<br><span class='cd'>无主之地 · 殖民价 "+fmt(price)+" 元</span>";
+    h+="<br><span class='cd'>点击购买（须与领土相邻）</span>";
+    return h;
+  }
+  const opid=own[0];
+  const oname=opid!=null?esc((PLAYERS[opid]||{}).name||"?"):"无主(有驻军)";
+  h+="<br><div class='pickrow'><span class='dot' style='background:"+(pColor(opid)||"#777")+"'></span>"+oname+"</div>";
+  const it=INTEL[i]&&INTEL[i].info;
+  if(it&&it.pop_approx!==undefined){
+    h+="<br><span class='cd'>人口约 "+fmt(it.pop_approx)+" · 驻军约 "+fmt(it.troops_approx)+" · 设施 "+it.b_cnt+" 座</span>";
+  }else{
+    h+="<br><span class='cd'>情报收集中…</span>";
+  }
+  return h;
+}
+function needIntel(i){
+  // 他人占领地需要拉取模糊情报
+  const own=WORLD[i];
+  if(!own||PHASE!=="playing")return false;
+  const opid=own[0];
+  if(opid==null)return false;
+  if(MY&&MY.mine&&MY.mine[i])return false;
+  const c=INTEL[i];
+  if(c&&Date.now()-c.ts<4000)return false;
+  return true;
+}
+function refreshTip(){
+  if(hovI>=0&&REG[hovI]&&!IS_TOUCH){
+    tip.innerHTML=tipHTML(hovI);
+    if(needIntel(hovI))socket.emit("mm_region_info",{room_id:ROOM_ID,player_id:MY_PID,region:hovI});
+  }
+}
+
+// ---------- 聊天 ----------
+document.getElementById("chatHead").addEventListener("click",()=>{
+  document.getElementById("chatBody").classList.toggle("open");
+});
+function sendChat(){
+  const inp=document.getElementById("chatIn");
+  const v=inp.value.trim();
+  if(!v)return;
+  socket.emit("chat_message",{room_id:ROOM_ID,player_id:MY_PID,message:v});
+  inp.value="";
+}
+document.getElementById("chatSend").addEventListener("click",sendChat);
+document.getElementById("chatIn").addEventListener("keydown",e=>{if(e.key==="Enter")sendChat()});
+
+// ---------- 横幅 ----------
+function showBanner(msg,auto){
+  const b=document.getElementById("banner");
+  b.textContent=msg;b.style.display="block";
+  clearTimeout(b._tm);
+  if(auto)b._tm=setTimeout(hideBanner,auto);
+}
+function hideBanner(){document.getElementById("banner").style.display="none"}
+
+// ---------- 建筑表（与引擎一致） ----------
+const BLD={
+  fort:{name:"堡垒",cost:[3000,16000,20000],time:[60,90,120],max:3,fx:["+50%防御","+100%防御","+200%防御"]},
+  tower:{name:"瞭望塔",cost:[3000,7000,15000],time:[30,60,90],max:3,fx:["视野2·+50%防御","视野3","视野4"]},
+  farm:{name:"农场",cost:[2000,3000,5000,7500,10000],time:[30,60,60,90,120],max:5,fx:["+2000人/分","+2500人/分","+3500人/分","+4000人/分","+5000人/分"]},
+  factory:{name:"工厂",cost:[3000,7500,20000],time:[60,90,120],max:3,fx:["人均×2","人均×4","人均×10"]},
+  port:{name:"港口",cost:[5000],time:[0],max:1,fx:["解锁出航"]},
+  camp:{name:"营地",cost:[7500],time:[0],max:1,fx:["兵耗减半"]},
+  lab:{name:"研究院",cost:[20000,30000,50000],time:[90,120,150],max:3,fx:["殖民0.8·战+25%·收+25%","殖民0.4","战+50%·收+50%"]},
+};
+
+// ---------- 二进制数据（与 /map 渲染器一致） ----------
+let BOX,FR,ROFF,C,FR2,ROFF2,C2,FRr,ROFFr,Cr,nf=0;
+let WB,WF,WROFF,WC,WB2,WF2,WROFF2,WC2,RB,RF,RC,RW1,RB2,RF2,RC2,RW2,nl=0,nriv=0,nriv2=0;
+let ATAI=-1;
+let DATAV="0b151c46a52757b6ea65c6bb99aeb3e5";
+let WATERV="a684fa86757ab29552e6ef9131aa4a0d";
+function idbOpen(){
+  return new Promise((res,rej)=>{
+    const r=indexedDB.open("worldmap",1);
+    r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);
+    r.onblocked=()=>rej(new Error("数据库被占用"));
+    r.onupgradeneeded=()=>r.result.createObjectStore("data");
+  });
+}
+async function idbSave(buf,key,ver){
+  key=key||"bin";ver=ver||DATAV;
+  try{
+    const db=await idbOpen();
+    const p=new Promise(res=>{const tx=db.transaction("data","readwrite").objectStore("data").put({h:ver,b:buf},key);tx.oncomplete=()=>res();tx.onerror=()=>res()});
+    await Promise.race([p,new Promise(r=>setTimeout(r,5000))]);
+  }catch(e){}
+}
+async function idbGet(key,ver){
+  try{
+    const db=await idbOpen();
+    const got=await new Promise(res=>{
+      const tx=db.transaction("data").objectStore("data").get(key);
+      tx.onsuccess=()=>res(tx.result);tx.onerror=()=>res(null);
+    });
+    if(got&&got.h===ver)return got.b;
+  }catch(e){}
+  return null;
+}
+async function fetchResumable(path, mirrors){
+  const urls=[path].concat(mirrors||[]);
+  let total=0;
+  for(const u of urls){
+    try{
+      const h=await fetch(u,{method:"HEAD"});
+      const cl=+h.headers.get("content-length")||0;
+      if(cl>1000000){total=cl;break;}
+    }catch(e){}
+  }
+  if(!total){
+    for(const u of urls){
+      try{hud.textContent="下载数据…";await yieldUI();
+        const r=await fetch(u); if(!r.ok)continue;
+        return await r.arrayBuffer();
+      }catch(e){}
+    }
+    throw new Error("无法下载数据(所有来源)");
+  }
+  const CH=8*1024*1024, out=new Uint8Array(total);
+  let url=urls[0];
+  for(let s=0;s<total;s+=CH){
+    const e=Math.min(s+CH,total)-1;
+    let ok=false;
+    for(let a=0;a<urls.length*6&&!ok;a++){
+      if(a&&a%urls.length===0){url=urls[(a/urls.length)%urls.length|0];}
+      try{
+        const r=await fetch(url,{headers:{Range:"bytes="+s+"-"+e}});
+        if(!(r.status===206||r.status===200))throw new Error(r.status);
+        const b=new Uint8Array(await r.arrayBuffer());
+        if(r.status===200){
+          if(s===0&&b.length===total)return b.buffer;
+          throw new Error("不支持续传");
+        }
+        if(b.length!==e-s+1)throw new Error("长度不符");
+        out.set(b,s);ok=true;
+      }catch(err){
+        hud.textContent="网络中断, 从断点继续… ("+(s/1048576|0)+"/"+(total/1048576|0)+"MB)";
+        await yieldUI();await new Promise(r=>setTimeout(r,800));
+      }
+    }
+    if(!ok)throw new Error("分块下载失败 @" + s);
+    hud.textContent="下载数据 "+((s+CH)/1048576|0)+"/"+(total/1048576|0)+"MB";await yieldUI();
+  }
+  return out.buffer;
+}
+const TGZS=["https://registry.npmmirror.com/citywar-map-data/-/citywar-map-data-1.2.1.tgz",
+            "https://registry.npmmirror.com/citywar-map-data/-/citywar-map-data-1.2.0.tgz",
+            "https://registry.npmmirror.com/citywar-map-data/-/citywar-map-data-1.1.0.tgz"];
+function untar(buf){
+  const files={},u=new Uint8Array(buf),td=new TextDecoder();
+  let off=0;
+  while(off+512<=u.length){
+    const name=td.decode(u.subarray(off,off+100)).replace(/\0.*$/,"");
+    if(!name)break;
+    const size=parseInt(td.decode(u.subarray(off+124,off+136)).replace(/\0.*$/,"").trim(),8)||0;
+    const prefix=td.decode(u.subarray(off+345,off+500)).replace(/\0.*$/,"").trim();
+    off+=512;
+    if(size>0)files[(prefix?prefix+"/":"")+name]=u.subarray(off,off+size);
+    off+=Math.ceil(size/512)*512;
+  }
+  return files;
+}
+async function loadFromNpm(url){
+  const ac=new AbortController();const tm=setTimeout(()=>ac.abort(),90000);
+  try{
+    const r=await fetch(url,{signal:ac.signal});
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    const total=+r.headers.get("content-length")||0;
+    const reader=r.body.getReader(),chunks=[];
+    let got=0,last=0;
+    while(true){
+      const {done,value}=await reader.read();
+      if(done)break;
+      chunks.push(value);got+=value.length;
+      const now=performance.now();
+      if(now-last>150){last=now;
+        hud.textContent="下载数据 "+(got/1048576).toFixed(1)+(total?"/"+(total/1048576).toFixed(1):"")+"MB";await yieldUI();}
+    }
+    const tgz=new Uint8Array(got);let o=0;
+    for(const c of chunks){tgz.set(c,o);o+=c.length;}
+    if(total&&got!==total)throw new Error("下载不完整 "+got+"/"+total);
+    hud.textContent="解包数据…";await yieldUI();
+    const ds=new Blob([tgz]).stream().pipeThrough(new DecompressionStream("gzip"));
+    const tar=new Uint8Array(await new Response(ds).arrayBuffer());
+    const files=untar(tar.buffer);
+    const out={};
+    const bin=files["package/static/map/map_world.bin"];
+    if(bin&&bin.length>1000000)out.world=bin.slice().buffer;
+    const wat=files["package/static/map/map_water.bin"];
+    if(wat&&wat.length>100000)out.water=wat.slice().buffer;
+    if(!out.world&&!out.water)throw new Error("数据包内容异常");
+    return out;
+  }finally{clearTimeout(tm);}
+}
+async function loadData(){
+  let buf=await idbGet("bin",DATAV);
+  let wbuf=await idbGet("water",WATERV);
+  if(!buf||!wbuf){
+    for(const u of TGZS){
+      if(buf&&wbuf)break;
+      try{
+        const t=await loadFromNpm(u);
+        if(!buf&&t.world)buf=t.world;
+        if(!wbuf&&t.water)wbuf=t.water;
+      }catch(e){ hud.textContent="CDN 不可用("+((e&&e.message)||e)+"), 换源重试…"; await yieldUI(); }
+    }
+    if(!buf){
+      hud.textContent="CDN 不可用, 从备用源并行下载底图…";await yieldUI();
+      const bufs=await Promise.all([0,1,2,3,4,5,6,7].map(i=>
+        fetchResumable("/static/map/map_world.bin.part"+i, []).then(b=>b)));
+      let total=0; for(const b of bufs) total+=b.byteLength;
+      const out=new Uint8Array(total); let off=0;
+      for(const b of bufs){ out.set(b, off); off+=b.byteLength; }
+      buf=out.buffer;
+    }
+    if(!wbuf){
+      try{ wbuf=await fetchResumable("/static/map/map_water.bin", []); }catch(e){}
+    }
+    if(buf)idbSave(buf,"bin",DATAV);
+    if(wbuf)idbSave(wbuf,"water",WATERV);
+  }
+  const u8=new Uint8Array(buf);
+  if(u8[0]===0x1f&&u8[1]===0x8b){
+    const ds=new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"));
+    buf=await new Response(ds).arrayBuffer();
+  }
+  const dv=new DataView(buf);
+  const jl=dv.getUint32(8,true);
+  const meta=JSON.parse(new TextDecoder("utf-8").decode(new Uint8Array(buf,12,jl)));
+  let off=12+jl; while(off%4)off++;
+  nf=meta.nf;
+  BOX=new Float32Array(buf,off,nf*4); off+=nf*16;
+  FR=new Int32Array(buf,off,nf+1); off+=(nf+1)*4;
+  ROFF=new Int32Array(buf,off,meta.nring+1); off+=(meta.nring+1)*4;
+  C=new Float32Array(buf,off,meta.npts*2); off+=meta.npts*8;
+  FR2=new Int32Array(buf,off,nf+1); off+=(nf+1)*4;
+  ROFF2=new Int32Array(buf,off,meta.nring2+1); off+=(meta.nring2+1)*4;
+  C2=new Float32Array(buf,off,meta.npts2*2);
+  for(let i=0;i<nf;i++){
+    const p=meta.meta[i];
+    if(p.gn==="南极洲")ATAI=i;
+  }
+  for(let k=1;k<C.length;k+=2)C[k]+=Y_SHIFT;
+  for(let k=1;k<C2.length;k+=2)C2[k]+=Y_SHIFT;
+  for(let i=0;i<nf;i++){BOX[i*4+1]+=Y_SHIFT;BOX[i*4+3]+=Y_SHIFT}
+  if(wbuf){
+    try{
+      const w8=new Uint8Array(wbuf);
+      if(w8[0]===0x1f&&w8[1]===0x8b){
+        const ds=new Blob([wbuf]).stream().pipeThrough(new DecompressionStream("gzip"));
+        wbuf=await new Response(ds).arrayBuffer();
+      }
+      const wd=new DataView(wbuf);
+      const wjl=wd.getUint32(8,true);
+      const wm=JSON.parse(new TextDecoder("utf-8").decode(new Uint8Array(wbuf,12,wjl)));
+      let wo=12+wjl; while(wo%4)wo++;
+      nl=wm.nl;
+      WB=new Float32Array(wbuf,wo,nl*4); wo+=nl*16;
+      WF=new Int32Array(wbuf,wo,nl+1); wo+=(nl+1)*4;
+      WROFF=new Int32Array(wbuf,wo,wm.nring+1); wo+=(wm.nring+1)*4;
+      WC=new Float32Array(wbuf,wo,wm.lpts*2); wo+=wm.lpts*8;
+      WB2=new Float32Array(wbuf,wo,wm.nl2*4); wo+=wm.nl2*16;
+      WF2=new Int32Array(wbuf,wo,wm.nl2+1); wo+=(wm.nl2+1)*4;
+      WROFF2=new Int32Array(wbuf,wo,wm.nring2+1); wo+=(wm.nring2+1)*4;
+      WC2=new Float32Array(wbuf,wo,wm.lpts2*2); wo+=wm.lpts2*8;
+      nriv=wm.nriv;
+      RB=new Float32Array(wbuf,wo,nriv*4); wo+=nriv*16;
+      RF=new Int32Array(wbuf,wo,nriv+1); wo+=(nriv+1)*4;
+      RC=new Float32Array(wbuf,wo,wm.rivpts*2); wo+=wm.rivpts*8;
+      RW1=new Uint8Array(wbuf,wo,nriv); wo+=nriv;
+      nriv2=wm.nriv2;
+      const rlen=nriv2*16+(nriv2+1)*4+wm.rivpts2*8+nriv2;
+      const rbuf=wbuf.slice(wo,wo+rlen);
+      RB2=new Float32Array(rbuf,0,nriv2*4);
+      RF2=new Int32Array(rbuf,nriv2*16,nriv2+1);
+      RC2=new Float32Array(rbuf,nriv2*16+(nriv2+1)*4,wm.rivpts2*2);
+      RW2=new Uint8Array(rbuf,nriv2*16+(nriv2+1)*4+wm.rivpts2*8,nriv2);
+      for(let k=1;k<WC.length;k+=2)WC[k]+=Y_SHIFT;
+      for(let k=1;k<WC2.length;k+=2)WC2[k]+=Y_SHIFT;
+      for(let k=1;k<RC.length;k+=2)RC[k]+=Y_SHIFT;
+      for(let k=1;k<RC2.length;k+=2)RC2[k]+=Y_SHIFT;
+      for(let i=0;i<nl;i++){WB[i*4+1]+=Y_SHIFT;WB[i*4+3]+=Y_SHIFT}
+      for(let i=0;i<wm.nl2;i++){WB2[i*4+1]+=Y_SHIFT;WB2[i*4+3]+=Y_SHIFT}
+      for(let i=0;i<nriv;i++){RB[i*4+1]+=Y_SHIFT;RB[i*4+3]+=Y_SHIFT}
+      for(let i=0;i<nriv2;i++){RB2[i*4+1]+=Y_SHIFT;RB2[i*4+3]+=Y_SHIFT}
+    }catch(e){ console.warn("水体数据解析失败",e); }
+  }
+}
+// ---------- 空间索引 / 拾取 ----------
+const CS=2,GRD=new Map(),BIG=[];
+function buildGrid(){
+  for(let i=0;i<nf;i++){
+    if(i===ATAI)continue;
+    const a=BOX[i*4],b=BOX[i*4+1],e=BOX[i*4+2],d=BOX[i*4+3];
+    const x0=Math.floor((a/W*360+180)/CS),x1=Math.floor((e/W*360+180)/CS);
+    const y0=Math.floor((b/H*360+180)/CS),y1=Math.floor((d/H*360+180)/CS);
+    let xspan=x1-x0+1; if(xspan<=0)xspan+=180;
+    if(xspan*(y1-y0+1)>48){BIG.push(i);continue}
+    for(let t=0;t<xspan;t++)for(let y=y0;y<=y1;y++){
+      const xx=(((x0+t)%180)+180)%180;
+      const k=xx+":"+y;let arr=GRD.get(k);if(!arr){arr=[];GRD.set(k,arr)}arr.push(i);
+    }
+  }
+}
+function inPolys(px,py,i){
+  let inside=false;
+  for(let r=FR[i];r<FR[i+1];r++){
+    const s=ROFF[r]*2,t=ROFF[r+1]*2;let cnt=0;
+    let j=t-2;
+    for(let a=s;a<t;a+=2){
+      const xi=C[a],yi=C[a+1],xj=C[j],yj=C[j+1];
+      if((yi>py)!==(yj>py)&&px<(xj-xi)*(py-yi)/(yj-yi)+xi)cnt++;
+      j=a;
+    }
+    if(cnt&1)inside=!inside;
+  }
+  return inside;
+}
+function pick(lon,lat){
+  const px=X(lon),py=Y(lat);
+  const xx=(((Math.floor((px/W*360+180)/CS))%180)+180)%180;
+  const k=xx+":"+Math.floor((py/H*360+180)/CS);
+  const cand=(GRD.get(k)||[]).concat(BIG);
+  for(const i of cand){
+    if(i===ATAI)continue;
+    if(px<BOX[i*4]||px>BOX[i*4+2]||py<BOX[i*4+1]||py>BOX[i*4+3])continue;
+    if(inPolys(px,py,i))return i;
+  }
+  return -1;
+}
+// ---------- 视图 ----------
+let scale=1,ox=0,oy=0,hovI=-1,pend=false,OX=0,hovOX=0;
+let lastFine=null,lastFS={scale:0,ox:0,oy:0};
+function fit(){
+  scale=Math.min(cv.width/DPR/W,cv.height/DPR/H)*0.98;
+  ox=(cv.width/DPR-W*scale)/2;oy=(cv.height/DPR-H*scale)/2;
+}
+function wrapOx(){
+  const ws=W*scale;
+  if(ws>1)ox=((ox%ws)+ws)%ws;
+}
+function clampView(){
+  const vw=cv.width/DPR,vh=cv.height/DPR;
+  const sMin=Math.min(vw/W,vh/H)*0.98;
+  if(scale<sMin){const f=sMin/scale;scale=sMin;ox=vw/2-(vw/2-ox)*f;oy=vh/2-(vh/2-oy)*f;}
+  wrapOx();
+  const hs=H*scale;
+  if(hs<=vh)oy=(vh-hs)/2;
+  else{if(oy>0)oy=0;if(oy+hs<vh)oy=vh-hs;}
+}
+function resize(){
+  cv.width=Math.round(innerWidth*DPR);cv.height=Math.round(innerHeight*DPR);
+  cv.style.width=innerWidth+"px";cv.style.height=innerHeight+"px";
+  lastFine=document.createElement("canvas");
+  lastFine.width=cv.width;lastFine.height=cv.height;
+  lastFS={scale:0,ox:0,oy:0};
+  fit();clampView();schedule();
+}
+function schedule(){if(!pend){pend=true;requestAnimationFrame(draw)}}
+let idleT=0,idleTimer=0;
+function interact(){
+  idleT=Date.now();
+  clearTimeout(idleTimer);
+  idleTimer=setTimeout(()=>{idleT=0;schedule()},200);
+  schedule();
+}
+// 自动定位到指定地块
+function focusRegion(i){
+  if(!REG[i]||!BOX)return;
+  const a=BOX[i*4],b=BOX[i*4+1],e=BOX[i*4+2],d=BOX[i*4+3];
+  const cx=(a+e)/2,cy=(b+d)/2;
+  const vw=cv.width/DPR,vh=cv.height/DPR;
+  const spanX=Math.max(e-a,W*0.06),spanY=Math.max(d-b,H*0.06);
+  scale=Math.min(vw/spanX,vh/spanY)*0.5;
+  scale=Math.max(scale,Math.min(vw/W,vh/H)*0.98);
+  ox=vw/2-cx*scale;oy=vh/2-cy*scale;
+  clampView();schedule();
+}
+function focusMyRegion(){
+  if(MY_PICK!=null&&MY_PICK>=0)focusRegion(MY_PICK);
+}
+function addRings(g,i){
+  for(let r=FRr[i];r<FRr[i+1];r++){
+    const s=ROFFr[r]*2,t=ROFFr[r+1]*2;
+    g.moveTo(Cr[s]*scale+OX,Cr[s+1]*scale+oy);
+    for(let a=s+2;a<t;a+=2)g.lineTo(Cr[a]*scale+OX,Cr[a+1]*scale+oy);
+    g.closePath();
+  }
+}
+function strokePoly(i){ctx.beginPath();addRings(ctx,i)}
+// 底图陆地：无主地白
+function drawLand(cand,wx0,wx1,wy0,wy1){
+  ctx.lineWidth=.6;ctx.strokeStyle="rgba(70,68,60,.35)";ctx.lineJoin="round";
+  const arr=[];
+  const put=i=>{
+    if(i===ATAI)return;
+    const a=BOX[i*4],b=BOX[i*4+1],e=BOX[i*4+2],d=BOX[i*4+3];
+    if(e<wx0||a>wx1||d<wy0||b>wy1)return;
+    const wpx=(e-a)*scale,hpx=(d-b)*scale;
+    if(wpx<.7&&hpx<.7)return;
+    arr.push(i);
+  };
+  if(cand){for(const i of cand)put(i)}
+  else{for(let i=0;i<nf;i++)put(i)}
+  ctx.beginPath();
+  for(const i of arr)addRings(ctx,i);
+  ctx.fillStyle=BASE_LAND;ctx.fill();
+  ctx.stroke();
+}
+// ---------- 整图快照 ----------
+let snap=null,snapJob=null;
+function paintLandChunk(g,from,to){
+  g.lineWidth=.6;g.strokeStyle="rgba(70,68,60,.35)";g.lineJoin="round";
+  const arr=[];
+  for(let i=from;i<to;i++){if(i!==ATAI)arr.push(i)}
+  g.beginPath();
+  for(const i of arr)addRings(g,i);
+  g.fillStyle=BASE_LAND;g.fill();g.stroke();
+}
+function paintLakeChunk(g,from,to){
+  g.fillStyle=SEAC;
+  for(let i=from;i<to;i++){
+    g.beginPath();
+    for(let r=WF[i];r<WF[i+1];r++){
+      const s=WROFF[r]*2,t=WROFF[r+1]*2;
+      g.moveTo(WC[s],WC[s+1]);
+      for(let p=s+2;p<t;p+=2)g.lineTo(WC[p],WC[p+1]);
+      g.closePath();
+    }
+    g.fill("evenodd");
+  }
+}
+function paintRiverChunk(g,from,to){
+  g.strokeStyle=SEAC;g.lineCap="round";g.lineJoin="round";
+  for(let w=0;w<3;w++){
+    g.beginPath();let any=false;
+    for(let i=from;i<to;i++){
+      if((RW1[i]||0)!==w)continue;
+      const s=RF[i]*2,t=RF[i+1]*2;
+      g.moveTo(RC[s],RC[s+1]);
+      for(let p=s+2;p<t;p+=2)g.lineTo(RC[p],RC[p+1]);
+      any=true;
+    }
+    if(any){g.lineWidth=RIVW[w]||1.1;g.stroke()}
+  }
+}
+function startSnapBuild(){
+  if(snapJob||snap||!nf)return;
+  const c=document.createElement("canvas");
+  c.width=W;c.height=H;
+  const sc=c.getContext("2d");
+  sc.fillStyle="#a6cbe2";sc.fillRect(0,0,W,H);
+  snapJob={c,sc,land:0,lake:0,river:0,phase:0};
+  requestAnimationFrame(pumpSnap);
+}
+function pumpSnap(){
+  const j=snapJob;if(!j)return;
+  if(idleT){ requestAnimationFrame(pumpSnap); return; }
+  const t0=performance.now();
+  const sCtx=ctx,sOx=OX,sOy=oy,sSc=scale,sFRr=FRr,sROFFr=ROFFr,sCr=Cr;
+  ctx=j.sc;OX=0;oy=0;scale=1;FRr=FR;ROFFr=ROFF;Cr=C;
+  try{
+    while(performance.now()-t0<12){
+      if(j.phase===0){
+        const to=Math.min(nf,j.land+600);
+        paintLandChunk(j.sc,j.land,to);j.land=to;
+        if(j.land>=nf)j.phase=1;
+      }else if(j.phase===1){
+        const to=Math.min(nl,j.lake+200);
+        paintLakeChunk(j.sc,j.lake,to);j.lake=to;
+        if(j.lake>=nl)j.phase=2;
+      }else{
+        const to=Math.min(nriv,j.river+400);
+        paintRiverChunk(j.sc,j.river,to);j.river=to;
+        if(j.river>=nriv)j.phase=3;
+      }
+      if(j.phase>=3)break;
+    }
+  }catch(e){ console.error("快照构建失败",e); snapJob=null;
+    ctx=sCtx;OX=sOx;oy=sOy;scale=sSc;FRr=sFRr;ROFFr=sROFFr;Cr=sCr;return; }
+  ctx=sCtx;OX=sOx;oy=sOy;scale=sSc;FRr=sFRr;ROFFr=sROFFr;Cr=sCr;
+  if(j.phase>=3){snap=j.c;snapJob=null;schedule()}
+  else requestAnimationFrame(pumpSnap);
+}
+// ---------- 水体 ----------
+const SEAC="#a6cbe2", RIVW=[1.1,1.7,2.5];
+function drawWater(z,wx0,wx1,wy0,wy1){
+  if(!nl&&!nriv)return;
+  ctx.fillStyle=SEAC;ctx.strokeStyle=SEAC;ctx.lineCap="round";ctx.lineJoin="round";
+  if(nl){
+    for(let i=0;i<nl;i++){
+      const a=WB[i*4],b=WB[i*4+1],e=WB[i*4+2],d=WB[i*4+3];
+      if(e<wx0||a>wx1||d<wy0||b>wy1)continue;
+      ctx.beginPath();
+      for(let r=WF[i];r<WF[i+1];r++){
+        const s=WROFF[r]*2,t=WROFF[r+1]*2;
+        ctx.moveTo(WC[s]*scale+OX,WC[s+1]*scale+oy);
+        for(let p=s+2;p<t;p+=2)ctx.lineTo(WC[p]*scale+OX,WC[p+1]*scale+oy);
+        ctx.closePath();
+      }
+      ctx.fill("evenodd");
+    }
+  }
+  if(nriv){
+    for(let w=0;w<3;w++){
+      ctx.beginPath();let any=false;
+      for(let i=0;i<nriv;i++){
+        if((RW1[i]||0)!==w)continue;
+        const a=RB[i*4],b=RB[i*4+1],e=RB[i*4+2],d=RB[i*4+3];
+        if(e<wx0||a>wx1||d<wy0||b>wy1)continue;
+        const s=RF[i]*2,t=RF[i+1]*2;
+        ctx.moveTo(RC[s]*scale+OX,RC[s+1]*scale+oy);
+        for(let p=s+2;p<t;p+=2)ctx.lineTo(RC[p]*scale+OX,RC[p+1]*scale+oy);
+        any=true;
+      }
+      if(any){ctx.lineWidth=RIVW[w]||1.1;ctx.stroke()}
+    }
+  }
+}
+// ---------- 游戏覆盖层 ----------
+function copiesVisible(){
+  const vw=cv.width/DPR;
+  const ws=W*scale;
+  const k0=Math.floor((0-ox)/ws),k1=Math.floor((vw-ox)/ws);
+  const out=[];
+  for(let k=k0;k<=k1;k++)out.push(ox+k*ws);
+  return out;
+}
+function drawOwnership(){
+  if(!nf)return;
+  const buckets=new Map();   // color -> [i]
+  if(PHASE==="picking"){
+    // 选地阶段：按选择者主题色着色（同一地块取第一个选择者）
+    const seen=new Set();
+    for(const pid in PICKS){
+      const i=PICKS[pid];
+      if(i==null||seen.has(i))continue;
+      seen.add(i);
+      const col=pColor(pid);
+      if(!col)continue;
+      let b=buckets.get(col);
+      if(!b){b=[];buckets.set(col,b)}
+      b.push(i);
+    }
+  }else{
+    for(const k in WORLD){
+      const i=+k;
+      const v=WORLD[k];
+      const col=pColor(v[0])||(v[1]!=null?pColor(v[1]):null);
+      if(!col)continue;
+      let b=buckets.get(col);
+      if(!b){b=[];buckets.set(col,b)}
+      b.push(i);
+    }
+  }
+  FRr=FR;ROFFr=ROFF;Cr=C;
+  ctx.lineWidth=1;ctx.strokeStyle="rgba(40,38,32,.45)";
+  for(const [col,arr] of buckets){
+    ctx.beginPath();
+    for(const i of arr)addRings(ctx,i);
+    ctx.fillStyle=col;
+    ctx.globalAlpha=.82;
+    ctx.fill();
+    ctx.globalAlpha=1;
+    ctx.stroke();
+  }
+}
+function armyPos(a){
+  const path=a.path;
+  if(!path||path.length<2)return REG[path[0]]||null;
+  let d=a.pos_km;
+  for(let s=0;s<path.length-1;s++){
+    const A=REG[path[s]],B=REG[path[s+1]];
+    if(!A||!B)continue;
+    let bl=B.lon;
+    if(bl-A.lon>180)bl-=360;
+    else if(bl-A.lon<-180)bl+=360;
+    const seg=havKm(A,B);
+    if(d<=seg||s===path.length-2){
+      const t=seg>0?Math.min(1,d/seg):1;
+      return {lon:A.lon+(bl-A.lon)*t,lat:A.lat+(B.lat-A.lat)*t};
+    }
+    d-=seg;
+  }
+  return REG[path[path.length-1]]||null;
+}
+function havKm(A,B){
+  const p=Math.PI/180;
+  const dlat=(B.lat-A.lat)*p,dlon=(B.lon-A.lon)*p;
+  const h=Math.sin(dlat/2)**2+Math.cos(A.lat*p)*Math.cos(B.lat*p)*Math.sin(dlon/2)**2;
+  return 6371*2*Math.asin(Math.sqrt(h));
+}
+function w2s(lon,lat,oxOff){
+  return [X(lon)*scale+oxOff,Y(lat)*scale+oy];
+}
+function drawUnits(){
+  const t=performance.now();
+  for(const k in BATTLES){
+    const b=BATTLES[k];
+    const rg=REG[+k];
+    if(!rg)continue;
+    for(const oxOff of copiesVisible()){
+      const [sx,sy]=w2s(rg.lon,rg.lat,oxOff);
+      if(sx<-40||sx>cv.width/DPR+40||sy<-40||sy>cv.height/DPR+40)continue;
+      const pulse=1+0.25*Math.sin(t/300);
+      ctx.lineWidth=3;ctx.strokeStyle="rgba(160,40,30,.9)";
+      ctx.beginPath();ctx.arc(sx,sy,11*pulse,0,Math.PI*2);ctx.stroke();
+      ctx.lineWidth=1.5;ctx.strokeStyle="rgba(255,255,255,.9)";
+      ctx.beginPath();ctx.arc(sx,sy,6,0,Math.PI*2);ctx.stroke();
+      ctx.font="bold 12px sans-serif";ctx.textAlign="center";ctx.textBaseline="top";
+      ctx.lineWidth=3;ctx.strokeStyle="rgba(250,248,242,.9)";
+      const label="⚔"+fmt(b.atk_troops)+"v"+fmt(b.def_troops);
+      ctx.strokeText(label,sx,sy+14);
+      ctx.fillStyle="#7a1f14";ctx.fillText(label,sx,sy+14);
+    }
+  }
+  for(const a of ARMIES){
+    const p=armyPos(a);
+    if(!p)continue;
+    const col=pColor(a.pid)||"#555";
+    for(const oxOff of copiesVisible()){
+      const [sx,sy]=w2s(p.lon,p.lat,oxOff);
+      if(sx<-40||sx>cv.width/DPR+40||sy<-40||sy>cv.height/DPR+40)continue;
+      ctx.beginPath();ctx.arc(sx,sy,8,0,Math.PI*2);
+      ctx.fillStyle=col;ctx.fill();
+      ctx.lineWidth=1.5;ctx.strokeStyle=(a.id===SEL_ARMY)?"#ffd54f":"#fff";ctx.stroke();
+      ctx.font="bold 10px sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";
+      ctx.fillStyle="#fff";ctx.fillText(fmt(a.troops),sx,sy);
+    }
+  }
+  if(MOVE_MODE){
+    ctx.font="13px 'Songti SC',serif";ctx.textAlign="center";ctx.textBaseline="top";
+    const msg="点击目的地出兵（右键/ESC取消）";
+    ctx.lineWidth=3;ctx.strokeStyle="rgba(250,248,242,.9)";
+    ctx.strokeText(msg,cv.width/DPR/2,cv.height/DPR-34);
+    ctx.fillStyle="#3e4a3a";ctx.fillText(msg,cv.width/DPR/2,cv.height/DPR-34);
+  }
+}
+function drawOverlay(){
+  const vw=cv.width/DPR,vh=cv.height/DPR;
+  const savedOX=OX;
+  for(const oxOff of copiesVisible()){
+    OX=oxOff;
+    FRr=FR;ROFFr=ROFF;Cr=C;
+    drawOwnership();
+  }
+  OX=savedOX;
+  // 冲突地块：红色虚线脉动
+  if(CONFLICTS.length){
+    const t=performance.now();
+    ctx.setLineDash([6,4]);ctx.lineDashOffset=-t/60;
+    ctx.lineWidth=2.5;ctx.strokeStyle="rgba(200,40,25,"+(0.6+0.35*Math.sin(t/250))+")";
+    for(const ci of CONFLICTS){
+      for(const oxOff of copiesVisible()){
+        OX=oxOff;FRr=FR;ROFFr=ROFF;Cr=C;
+        strokePoly(ci);ctx.stroke();
+      }
+    }
+    ctx.setLineDash([]);
+  }
+  // 选中框
+  if(SEL>=0&&REG[SEL]){
+    for(const oxOff of copiesVisible()){
+      OX=oxOff;FRr=FR;ROFFr=ROFF;Cr=C;
+      ctx.lineWidth=2.5;ctx.strokeStyle=SELC;
+      ctx.setLineDash([6,4]);ctx.lineDashOffset=-performance.now()/60;
+      strokePoly(SEL);ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+  // hover
+  if(hovI>=0&&hovI!==SEL&&REG[hovI]){
+    for(const oxOff of [hovOX]){
+      OX=oxOff;FRr=FR;ROFFr=ROFF;Cr=C;
+      ctx.fillStyle=HOV;
+      strokePoly(hovI);ctx.fill();
+    }
+  }
+  drawUnits();
+}
+function drawScale(vw,vh){
+  const wx=(vw/2-ox)/scale, wy=(vh/2-oy)/scale;
+  const ym=VTOP-wy/PPR;
+  const lat=(2*Math.atan(Math.exp(ym))-Math.PI/2)*180/Math.PI;
+  const kmPerPx=111.32*Math.cos(lat*Math.PI/180)/(PPR*Math.PI/180*scale);
+  const SCALE_STEPS=[5000,3000,2000,1000,500,300,200,100,50,30,20,10,5,2,1];
+  let km=SCALE_STEPS[SCALE_STEPS.length-1];
+  for(const s of SCALE_STEPS){ if(s/kmPerPx<=140){km=s;break} }
+  const px=km/kmPerPx;
+  const x2=vw-30, x1=x2-px, y1=vh-22;
+  ctx.strokeStyle="#33302a"; ctx.lineWidth=1.2;
+  ctx.beginPath();
+  ctx.moveTo(x1,y1-5);ctx.lineTo(x1,y1);ctx.lineTo(x2,y1);ctx.lineTo(x2,y1-5);
+  ctx.stroke();
+  ctx.font="12px 'Songti SC','STSong','SimSun',serif";
+  ctx.textAlign="center";ctx.textBaseline="bottom";
+  const la=Math.abs(lat);
+  const latStr=la<0.5?"0°":Math.round(la)+"°"+(lat>=0?"N":"S");
+  const label=km.toLocaleString()+" km · "+latStr;
+  ctx.lineWidth=3;ctx.strokeStyle="rgba(250,248,242,.85)";
+  ctx.strokeText(label,(x1+x2)/2,y1-2);
+  ctx.fillStyle="#33302a";ctx.fillText(label,(x1+x2)/2,y1-2);
+}
+function draw(){
+  pend=false;
+  const vw=cv.width/DPR,vh=cv.height/DPR;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.fillStyle="#a6cbe2";ctx.fillRect(0,0,vw,vh);
+  const zoomed=(vw/scale)<W*0.15||scale>1.25;
+  if(!zoomed){
+    lastFS.scale=0;
+    if(snap){
+      const ws=W*scale,hs=H*scale;
+      const k0=Math.floor((0-ox)/ws),k1=Math.floor((vw-ox)/ws);
+      for(let k=k0;k<=k1;k++)ctx.drawImage(snap,ox+k*ws,oy,ws,hs);
+    }else{
+      FRr=FR2;ROFFr=ROFF2;Cr=C2;
+      const ws=W*scale;
+      const k0=Math.floor((0-ox)/ws),k1=Math.floor((vw-ox)/ws);
+      for(let k=k0;k<=k1;k++){
+        OX=ox+k*ws;
+        try{
+          drawLand(null,(0-OX)/scale-1e6,(vw-OX)/scale+1e6,(0-oy)/scale-1e6,(vh-oy)/scale+1e6);
+          drawWater(false,(0-OX)/scale-1e6,(vw-OX)/scale+1e6,(0-oy)/scale-1e6,(vh-oy)/scale+1e6);
+        }catch(e){}
+      }
+      startSnapBuild();
+    }
+  }else{
+    const fine=!idleT;
+    if(!fine&&lastFine&&lastFS.scale>0){
+      const f=scale/lastFS.scale;
+      ctx.drawImage(lastFine,ox-lastFS.ox*f,oy-lastFS.oy*f,vw*f,vh*f);
+    }else{
+      FRr=fine?FR:FR2;ROFFr=fine?ROFF:ROFF2;Cr=fine?C:C2;
+      const ws=W*scale;
+      const k0=Math.floor((0-ox)/ws),k1=Math.floor((vw-ox)/ws);
+      for(let k=k0;k<=k1;k++){
+        OX=ox+k*ws;
+        const wx0=(0-OX)/scale,wx1=(vw-OX)/scale,wy0=(0-oy)/scale,wy1=(vh-oy)/scale;
+        let cand=null;
+        if(fine){
+          const gx0=Math.floor((wx0/W*360+180)/CS)-1,gx1=Math.floor((wx1/W*360+180)/CS)+1;
+          const gy0=Math.floor((wy0/H*360+180)/CS)-1,gy1=Math.floor((wy1/H*360+180)/CS)+1;
+          const seen=new Set();
+          for(let x=gx0;x<=gx1;x++)for(let y=gy0;y<=gy1;y++){
+            const xx=((x%180)+180)%180;
+            const arr=GRD.get(xx+":"+y);if(arr)for(const i of arr)seen.add(i);
+          }
+          for(const i of BIG)seen.add(i);
+          cand=seen;
+        }
+        try{
+          drawLand(cand,wx0,wx1,wy0,wy1);
+          drawWater(fine,wx0,wx1,wy0,wy1);
+        }catch(e){}
+      }
+      if(lastFine&&(scale!==lastFS.scale||ox!==lastFS.ox||oy!==lastFS.oy)&&(fine||lastFS.scale<=0)){
+        const lc=lastFine.getContext("2d");
+        lc.setTransform(1,0,0,1,0,0);
+        lc.clearRect(0,0,lastFine.width,lastFine.height);
+        lc.drawImage(cv,0,0);
+        lastFS={scale,ox,oy};
+      }
+    }
+  }
+  drawOverlay();
+  drawScale(vw,vh);
+}
+// ---------- 事件 ----------
+let drag=false,sx0=0,sy0=0,downX=0,downY=0;
+cv.addEventListener("mousedown",e=>{drag=true;downX=e.clientX;downY=e.clientY;sx0=e.clientX;sy0=e.clientY;cv.style.cursor="grabbing"});
+addEventListener("mouseup",e=>{
+  if(drag&&Math.abs(e.clientX-downX)+Math.abs(e.clientY-downY)<5)onMapClick(e.clientX,e.clientY,e.button);
+  drag=false;cv.style.cursor="grab";
+});
+cv.addEventListener("dblclick",()=>{fit();clampView();schedule()});
+cv.addEventListener("wheel",e=>{
+  e.preventDefault();
+  const sMin=Math.min(cv.width/DPR/W,cv.height/DPR/H)*0.98;
+  if(e.deltaY>0&&scale<=sMin+1e-6)return;
+  const f=e.deltaY<0?1.18:1/1.18;
+  const mx=e.clientX,my=e.clientY;
+  ox=mx-(mx-ox)*f;oy=my-(my-oy)*f;scale*=f;
+  clampView();
+  interact();
+},{passive:false});
+addEventListener("resize",resize);
+addEventListener("keydown",e=>{if(e.key==="Escape")cancelMoveMode()});
+function normLon(lon){return ((lon+180)%360+360)%360-180}
+function evRegion(e){
+  const lon=normLon((e.clientX-ox)/scale/W*360-180);
+  const my=(e.clientY-oy)/scale;
+  const ym=VTOP-my/PPR;
+  const lat=(2*Math.atan(Math.exp(ym))-Math.PI/2)*180/Math.PI;
+  const i=pick(lon,lat);
+  return {i,clientX:e.clientX,clientY:e.clientY};
+}
+cv.addEventListener("mousemove",e=>{
+  if(drag){ox+=e.clientX-sx0;oy+=e.clientY-sy0;sx0=e.clientX;sy0=e.clientY;clampView();interact();return}
+  const {i,clientX,clientY}=evRegion(e);
+  if(i>=0&&REG[i]){
+    hovOX=ox+Math.floor((clientX-ox)/(W*scale))*(W*scale);
+    if(i!==hovI){hovI=i;schedule()}
+    tip.style.display="block";
+    tip.style.left=Math.min(clientX+14,innerWidth-300)+"px";tip.style.top=(clientY+14)+"px";
+    tip.innerHTML=tipHTML(i);
+    if(needIntel(i))socket.emit("mm_region_info",{room_id:ROOM_ID,player_id:MY_PID,region:i});
+  }else{
+    if(hovI!==-1){hovI=-1;schedule()}
+    tip.style.display="none";
+  }
+});
+cv.addEventListener("mouseleave",()=>{tip.style.display="none";if(hovI!==-1){hovI=-1;schedule()}});
+cv.addEventListener("contextmenu",e=>{e.preventDefault();cancelMoveMode()});
+// 触屏
+let tDrag=false,tX0=0,tY0=0,tMoved=false,tPinch=null,tT0=0;
+cv.addEventListener("touchstart",e=>{
+  e.preventDefault();
+  if(e.touches.length===1){
+    tDrag=true;tMoved=false;tT0=Date.now();
+    tX0=e.touches[0].clientX;tY0=e.touches[0].clientY;
+  }else if(e.touches.length===2){
+    tDrag=false;
+    const a=e.touches[0],b=e.touches[1];
+    tPinch={d:Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY),
+            mx:(a.clientX+b.clientX)/2,my:(a.clientY+b.clientY)/2};
+  }
+  interact();
+},{passive:false});
+cv.addEventListener("touchmove",e=>{
+  e.preventDefault();
+  if(tPinch&&e.touches.length===2){
+    const a=e.touches[0],b=e.touches[1];
+    const d=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+    const mx=(a.clientX+b.clientX)/2,my=(a.clientY+b.clientY)/2;
+    const f=d/tPinch.d;
+    ox=mx-(tPinch.mx-ox)*f;oy=my-(tPinch.my-oy)*f;scale*=f;
+    tPinch.d=d;tPinch.mx=mx;tPinch.my=my;
+    tMoved=true;clampView();interact();
+  }else if(tDrag&&e.touches.length===1){
+    const x=e.touches[0].clientX,y=e.touches[0].clientY;
+    if(Math.abs(x-tX0)+Math.abs(y-tY0)>4)tMoved=true;
+    ox+=x-tX0;oy+=y-tY0;tX0=x;tY0=y;clampView();interact();
+  }
+},{passive:false});
+cv.addEventListener("touchend",e=>{
+  e.preventDefault();
+  if(e.touches.length===0){
+    if(!tMoved&&Date.now()-tT0<350&&tDrag){
+      const x=e.changedTouches[0].clientX,y=e.changedTouches[0].clientY;
+      onMapClick(x,y,0);
+    }
+    tDrag=false;tPinch=null;
+  }else if(e.touches.length===1){
+    tPinch=null;tDrag=true;tMoved=true;
+    tX0=e.touches[0].clientX;tY0=e.touches[0].clientY;
+  }
+},{passive:false});
+// ---------- 点击 / 操作 ----------
+function armyAt(x,y){
+  let best=null,bd=16;
+  for(const a of ARMIES){
+    const p=armyPos(a);
+    if(!p)continue;
+    for(const oxOff of copiesVisible()){
+      const [sx,sy]=w2s(p.lon,p.lat,oxOff);
+      const d=Math.hypot(sx-x,sy-y);
+      if(d<bd){bd=d;best=a}
+    }
+  }
+  return best;
+}
+function onMapClick(x,y,button){
+  if(button===2)return;
+  closeIsland();
+  // 军队优先
+  const a=armyAt(x,y);
+  if(a&&PHASE!=="picking"){
+    SEL_ARMY=a.id;SEL=-1;
+    renderPanel();schedule();
+    return;
+  }
+  SEL_ARMY=0;
+  const lon=normLon((x-ox)/scale/W*360-180);
+  const ym=VTOP-((y-oy)/scale)/PPR;
+  const lat=(2*Math.atan(Math.exp(ym))-Math.PI/2)*180/Math.PI;
+  const i=pick(lon,lat);
+  if(i<0){SEL=-1;renderPanel();schedule();return}
+  if(MOVE_MODE){
+    askSend(MOVE_MODE.from,i);
+    return;
+  }
+  if(PHASE==="picking"){
+    // 桌面：点击直接选地；触屏：打开卡片用按钮确认
+    if(IS_TOUCH){SEL=i;renderPanel();schedule()}
+    else doPick(i);
+    return;
+  }
+  SEL=i;renderPanel();schedule();
+}
+function doPick(i){
+  socket.emit("mm_pick",{room_id:ROOM_ID,player_id:MY_PID,region:i});
+}
+function cancelMoveMode(){
+  if(MOVE_MODE){MOVE_MODE=null;renderPanel()}
+}
+function act(actName,args){
+  socket.emit("mm_action",{room_id:ROOM_ID,player_id:MY_PID,act:actName,args:args||{}});
+}
+function confirmPick(){
+  if(SEL<0)return;
+  doPick(SEL);
+}
+function colonizeSel(){
+  if(SEL<0)return;
+  act("colonize",{region:SEL});
+}
+function recruitSel(){
+  const inp=document.getElementById("recruitCount");
+  const n=Math.max(1,parseInt(inp&&inp.value||"0",10)||0);
+  act("recruit",{region:SEL,count:n});
+}
+function askSend(from,to){
+  const mine=MY&&MY.mine&&MY.mine[from];
+  const troops=mine?mine.troops:0;
+  const v=prompt("出兵数量（该地驻军 "+fmt(troops)+"）:",String(troops));
+  MOVE_MODE=null;
+  if(v===null)return;
+  const n=parseInt(v,10)||0;
+  if(n<=0||n>troops){toast("兵力数量无效");return}
+  act("send",{from:from,to:to,count:n});
+}
+// ---------- 面板 ----------
+function closePanel(){SEL=-1;SEL_ARMY=0;renderPanel();schedule()}
+function renderPanel(){
+  const p=document.getElementById("panel");
+  if(SEL_ARMY){
+    const a=ARMIES.find(x=>x.id===SEL_ARMY);
+    if(!a){p.style.display="none";SEL_ARMY=0;return}
+    const prog=Math.min(100,Math.round(a.pos_km/Math.max(a.total_km,1)*100));
+    const from=REG[a.path[0]],to=REG[a.path[a.path.length-1]];
+    let h='<button class="close" onclick="closePanel()">✕</button>';
+    h+='<h3>⚔ 军队 #'+a.id+'</h3>';
+    h+='<div><span class="own" style="background:'+(pColor(a.pid)||"#777")+'"></span>'+esc((PLAYERS[a.pid]||{}).name||"?")+(a.pid===MY_PID?"（你）":"")+'</div>';
+    h+='<div>兵力 '+fmt(a.troops)+'</div>';
+    h+='<div class="dim">'+esc(from?from.n:"?")+' → '+esc(to?to.n:"?")+'</div>';
+    h+='<div>行军进度 '+prog+'%（'+fmt(a.pos_km)+'/'+fmt(a.total_km)+' km，83km/s）</div>';
+    const dest=to?to.n:null;
+    if(dest&&a.pid===MY_PID)h+='<div class="dim">抵达后：无主地驻扎 / 敌方或他人驻军地开战</div>';
+    p.innerHTML=h;p.style.display="block";return;
+  }
+  if(SEL<0||!REG[SEL]){p.style.display="none";return}
+  const rg=REG[SEL];
+  const own=WORLD[SEL];
+  const mine=MY&&MY.mine&&MY.mine[SEL];
+  const mineR=mine&&mine.owner===MY_PID?mine:null;
+  const picking=PHASE==="picking";
+  const myPick=MY_PICK===SEL;
+  const spec=PLAYERS[MY_PID]&&PLAYERS[MY_PID].is_spectator;
+  let h='<button class="close" onclick="closePanel()">✕</button>';
+  h+="<h3>"+esc(rg.n)+"</h3>";
+  h+='<div class="dim">'+esc(rg.c)+" · ≈"+fmt(rg.a)+' km²</div>';
+  if(picking){
+    h+='<div>初始人口 '+fmt(rg.a*2)+' · 预计启动资金 '+fmt(startMoney(rg.a))+' 元</div>';
+    const ps=Object.keys(PICKS).filter(pid=>PICKS[pid]===SEL);
+    for(const pid of ps){
+      h+='<div class="row"><span class="own" style="background:'+(pColor(pid)||"#777")+'"></span>'+esc((PLAYERS[pid]||{}).name||"?");
+      h+=CONFLICTS.includes(SEL)?' <span style="color:#8c3b2e">⚠ 冲突</span>':"";
+      h+='</div>';
+    }
+    if(spec){h+='<div class="dim">你是观战者，不能选地</div>'}
+    else if(myPick){h+='<div>✅ 已选此地'+(CONFLICTS.includes(SEL)?'（冲突！点击其他地块重选）':"")+'</div>'}
+    else h+='<button onclick="confirmPick()">选为出生地</button>';
+    p.innerHTML=h;p.style.display="block";return;
+  }
+  // playing
+  const opid=own?own[0]:null;
+  const gpid=own&&own[1]!=null?own[1]:(mine?mine.garrison:null);
+  if(opid!=null){
+    const pc=pColor(opid)||"#999";
+    h+='<div><span class="own" style="background:'+pc+'"></span>归属: '+esc((PLAYERS[opid]||{}).name||"?")+(opid===MY_PID?"（你）":"")+'</div>';
+  }else if(gpid!=null){
+    h+='<div>无主 · 驻军: '+esc((PLAYERS[gpid]||{}).name||"?")+'</div>';
+  }else{
+    h+='<div>无主之地</div>';
+  }
+  if(BATTLES[SEL]){
+    const b=BATTLES[SEL];
+    h+='<div style="color:#8c3b2e">⚔ 交战中: '+esc((PLAYERS[b.atk_pid]||{}).name||"?")+" "+fmt(b.atk_troops)
+      +" vs "+fmt(b.def_troops)+" "+esc((PLAYERS[b.def_pid]||{}).name||"?")+'</div>';
+  }
+  if(mineR||mine){
+    const r=mineR||mine;
+    h+='<div>人口 '+fmt(r.pop)+" · 驻军 "+fmt(r.troops)+(r.conquest?' <span class="tag">攻占地禁征兵</span>':"")+'</div>';
+    const bl=[];
+    for(const k in r.b){const sp=BLD[k];if(sp)bl.push('<span class="tag">'+sp.name+r.b[k]+"</span>")}
+    for(const q of r.queue){const sp=BLD[q.type];if(sp)bl.push('<span class="tag">🏗'+sp.name+q.lvl+" "+Math.ceil(q.left)+"s</span>")}
+    if(bl.length)h+='<div>'+bl.join("")+'</div>';
+  }else if(opid!=null&&opid!==MY_PID){
+    // 他人地块：模糊情报
+    const it=INTEL[SEL]&&INTEL[SEL].info;
+    if(it&&it.pop_approx!==undefined){
+      h+='<div class="dim">情报：人口约 '+fmt(it.pop_approx)+' · 驻军约 '+fmt(it.troops_approx)+' · 设施 '+it.b_cnt+' 座</div>';
+    }else{
+      h+='<div class="dim">情报收集中…</div>';
+      socket.emit("mm_region_info",{room_id:ROOM_ID,player_id:MY_PID,region:SEL});
+    }
+  }
+  h+='<hr style="border:none;border-top:1px solid #d5d1c4;margin:8px 0">';
+  if(mineR){
+    if(!mineR.conquest){
+      const cap=Math.max(0,Math.floor(mineR.pop*0.2-mineR.recruited));
+      h+='<div>征兵（≤该地人口20%，还可征 '+fmt(cap)+'，1元/人）</div>';
+      h+='<div><input id="recruitCount" type="number" min="1" max="'+cap+'" value="'+Math.min(cap,1000)+'">'
+        +'<button onclick="recruitSel()"'+(cap<1?" disabled":"")+'>征兵</button></div>';
+    }
+    const myMoney=MY&&MY.me?MY.me.money:0;
+    h+='<div class="dim" style="margin-top:4px">设施（建造/升级/拆除）</div>';
+    for(const k in BLD){
+      const sp=BLD[k];
+      const cur=mineR.b[k]||0;
+      const inQ=mineR.queue.some(q=>q.type===k);
+      if(cur>=sp.max)continue;
+      const cost=sp.cost[cur],tm=sp.time[cur];
+      h+='<div class="bitem"><span class="nm"><b>'+sp.name+'</b> '+(cur?"Lv"+cur+"→"+(cur+1):"")+'</span>'
+        +'<button onclick="act(\'build\',{region:'+SEL+',type:\''+k+'\'})"'+((myMoney<cost||inQ)?" disabled":"")+'>'
+        +fmt(cost)+"元"+(tm?"·"+tm+"s":"")+"</button>"
+        +'<span class="dim">'+sp.fx[cur]+"</span></div>";
+    }
+    const hasB=Object.keys(mineR.b).length;
+    if(hasB){
+      h+='<div style="margin-top:4px">';
+      for(const k in mineR.b){
+        h+='<button class="ghost" onclick="act(\'demolish\',{region:'+SEL+',type:\''+k+'\'})">拆除'+BLD[k].name+'</button>';
+      }
+      h+='</div>';
+    }
+    if(mineR.troops>0){
+      h+='<div style="margin-top:6px"><button onclick="MOVE_MODE={from:'+SEL+'};renderPanel()">⚔ 出兵（点击后选目的地）</button></div>';
+    }
+    if(MOVE_MODE&&MOVE_MODE.from===SEL){
+      h+='<div style="color:#8c3b2e">点击地图上的目的地出兵（83km/s，右键取消）</div>';
+    }
+  }else if(opid==null){
+    const price=Math.round(rg.a*(MY&&MY.colonize_price||1));
+    const myMoney=MY&&MY.me?MY.me.money:0;
+    h+='<div>殖民价 '+fmt(price)+" 元（"+(MY&&MY.colonize_price||1)+"元/km²，附带 2人/km²）</div>";
+    h+='<button onclick="colonizeSel()"'+(myMoney<price?" disabled":"")+'>购买 / 殖民</button>';
+    h+='<div class="dim">须与你的领土相邻或有己方驻军</div>';
+  }else if(opid!==MY_PID){
+    h+='<div class="dim">他人地块：从相邻己方驻军出兵进攻，胜利继承全部设施与人口</div>';
+  }
+  p.innerHTML=h;p.style.display="block";
+}
+// ---------- 启动 ----------
+window.addEventListener("error",e=>{
+  hud.textContent="运行错误: "+(e.message||e.type)+" @"+(e.lineno||"?")+"行";
+  hud.style.background="rgba(255,220,200,.95)";
+});
+window.addEventListener("unhandledrejection",e=>{
+  hud.textContent="异步错误: "+((e.reason&&e.reason.message)||e.reason||"unknown");
+  hud.style.background="rgba(255,220,200,.95)";
+});
+(async function(){
+  const T0=performance.now();
+  try{
+    loadRegions().catch(()=>{});
+    hud.textContent="下载数据…";await yieldUI();
+    await loadData();
+    hud.textContent="建索引…";await yieldUI();
+    buildGrid();
+    resize();
+    startSnapBuild();
+    const el=((performance.now()-T0)/1000).toFixed(1);
+    hud.textContent="城池战争 · 地图模式 · 拖动平移 / 滚轮缩放 (加载 "+el+"s)";
+    renderIsland();
+    setTimeout(()=>{
+      if(PHASE==="loading")showBanner("连接服务器中… 请检查网络或刷新重试");
+    },4000);
+  }catch(err){
+    hud.textContent="加载失败: "+((err&&err.message)||err);
+  }
+})();
+window.onMapClick=onMapClick;
+</script>
+</body>
+</html>

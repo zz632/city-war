@@ -42,6 +42,7 @@ class Player:
     is_spectator: bool = False
     is_ai: bool = False
     username: str = ''  # 关联的登录用户名
+    theme_color: str = ''  # 地图模式主题色
     skills: List[Dict] = field(default_factory=list)
     action: Optional[Dict] = None
     alliance_with: Optional[str] = None
@@ -63,6 +64,7 @@ class Player:
             "is_ready": self.is_ready,
             "is_spectator": self.is_spectator,
             "is_ai": self.is_ai,
+            "theme_color": self.theme_color,
             "alliance_with": self.alliance_with,
             "repair_active": self.repair_active,
         }
@@ -114,6 +116,7 @@ class Room:
     game_state: Optional['GameState'] = None
     created_at: float = field(default_factory=time.time)
     max_players: int = 8
+    room_type: str = 'classic'  # classic=经典回合制 | map_mode=地图模式
     allow_join_after_start: bool = False  # 是否允许游戏开始后加入
     password: str = ''  # 房间密码（空串=无密码）
 
@@ -128,6 +131,7 @@ class Room:
             "id": self.id,
             "name": self.name,
             "host_id": self.host_id,
+            "room_type": self.room_type,
             "players": {pid: p.to_dict(is_spectator, is_self=(pid == player_id)) for pid, p in self.players.items()},
             "player_count": len(self.players),
             "max_players": self.max_players,

@@ -350,7 +350,7 @@ function oauthLogin(provider) {
 
 // ===== 房间操作 =====
 
-// 创建房间：选择游戏版本（新版开发中，暂只能进旧版）
+// 创建房间：选择游戏版本（地图模式 / 经典模式）
 function showVersionModal(name) {
     if (document.getElementById('version-modal')) return;
     const overlay = document.createElement('div');
@@ -366,9 +366,9 @@ function showVersionModal(name) {
                 <div class="vo-head">
                     <span class="vo-name">新版 · 世界地图</span>
                     <span class="badge badge-gold">推荐</span>
-                    <span class="badge badge-gray">开发中</span>
+                    <span class="badge badge-gray">一期</span>
                 </div>
-                <div class="vo-desc">以真实世界地图为版图的全新玩法，正在建设中</div>
+                <div class="vo-desc">真实时大乱斗：选地出生 / 殖民 / 建造 / 征兵 / 陆战（建筑与海战陆续实装）</div>
             </div>
             <div class="version-option" id="ver-old">
                 <div class="vo-head"><span class="vo-name">旧版 · 经典模式</span></div>
@@ -378,26 +378,33 @@ function showVersionModal(name) {
     document.body.appendChild(overlay);
     overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
     document.getElementById('ver-new').addEventListener('click', () => {
-        toast('新版开发中，敬请期待', 'info');
+        overlay.remove();
+        createRoom(name, 'map_mode');
     });
     document.getElementById('ver-old').addEventListener('click', () => {
         overlay.remove();
-        createRoom(name);
+        createRoom(name, 'classic');
     });
 }
 
-async function createRoom(name) {
+async function createRoom(name, mode) {
     try {
         const res = await fetch('/api/rooms', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
-            body: JSON.stringify({ player_name: name })
+            body: JSON.stringify({ player_name: name, mode: mode || 'classic' })
         });
         const data = await res.json();
         if (data.success) {
             myPlayerId = data.player.id;
             myRoomId = data.room.id;
-            window.location.href = '/lobby/' + myRoomId + '?pid=' + myPlayerId + (authToken ? '&token=' + authToken : '');
+            const tokenParam = authToken ? '&token=' + authToken : '';
+            if ((mode || 'classic') === 'map_mode') {
+                // 地图模式：房间页即地图（选地大厅）
+                window.location.href = '/mgame/' + myRoomId + '?pid=' + myPlayerId + tokenParam;
+            } else {
+                window.location.href = '/lobby/' + myRoomId + '?pid=' + myPlayerId + tokenParam;
+            }
         } else {
             toast(data.message || '创建失败', 'error');
         }
@@ -436,7 +443,11 @@ async function _doJoinRoom(name, code, password) {
             myPlayerId = data.player.id;
             myRoomId = code;
             const tokenParam = authToken ? '&token=' + authToken : '';
-            if (data.is_spectator) {
+            const roomType = (data.room && data.room.room_type) || 'classic';
+            if (roomType === 'map_mode') {
+                // 地图模式：房间页即地图（选地大厅）
+                window.location.href = '/mgame/' + myRoomId + '?pid=' + myPlayerId + tokenParam;
+            } else if (data.is_spectator) {
                 window.location.href = '/game/' + myRoomId + '?pid=' + myPlayerId + tokenParam;
             } else {
                 window.location.href = '/lobby/' + myRoomId + '?pid=' + myPlayerId + tokenParam;
@@ -519,10 +530,25 @@ function initLobby() {
             const maxInput = document.getElementById('roomMaxPlayersInput');
             if (maxInput) maxInput.value = data.max_players;
         }
+        // 主题色选择高亮同步
+        if (window._roomSettings.room_type === 'map_mode') {
+            setupThemePicker();
+            const me = getSelfPlayer();
+            if (me && me.theme_color) {
+                const wrap = document.getElementById('themeSwatches');
+                if (wrap) wrap.querySelectorAll('.swatch').forEach(s => {
+                    s.style.boxShadow = s.dataset.color === me.theme_color ? '0 0 0 3px #f60' : '0 0 0 1px #ccc';
+                });
+            }
+        }
     });
 
     socket.on('game_started', data => {
-        window.location.href = '/game/' + roomId + '?pid=' + myPlayerId;
+        if (data.room_type === 'map_mode') {
+            window.location.href = '/mgame/' + roomId + '?pid=' + myPlayerId;
+        } else {
+            window.location.href = '/game/' + roomId + '?pid=' + myPlayerId;
+        }
     });
 
     socket.on('error_msg', data => {
@@ -611,13 +637,49 @@ async function fetchLobbyState(roomId) {
                 allow_join_after_start: data.room.allow_join_after_start,
                 has_password: data.room.has_password,
                 max_players: data.room.max_players,
+                room_type: data.room.room_type || 'classic',
             };
+            if (window._roomSettings.room_type === 'map_mode') setupThemePicker();
             const toggle = document.getElementById('allowJoinToggle');
             if (toggle && data.room.allow_join_after_start !== undefined) {
                 toggle.checked = data.room.allow_join_after_start;
             }
         }
     } catch (e) {}
+}
+
+// 从最新玩家列表里取自己的信息
+function getSelfPlayer() {
+    const arr = socket && socket._lobbyPlayers ? Object.values(socket._lobbyPlayers) : [];
+    return arr.find(p => p.id === myPlayerId) || null;
+}
+
+// 地图模式：大厅主题色选择
+const THEME_COLORS = ['#c0392b', '#2980b9', '#27ae60', '#f39c12', '#8e44ad',
+    '#16a085', '#d35400', '#2c3e50', '#e91e63', '#00bcd4',
+    '#7cb342', '#795548', '#f06292', '#5c6bc0', '#ffb300', '#26a69a'];
+
+function setupThemePicker() {
+    const card = document.getElementById('themeCard');
+    const wrap = document.getElementById('themeSwatches');
+    if (!card || !wrap) return;
+    card.style.display = '';
+    if (wrap.childElementCount) return;
+    const rid = myRoomId || (document.getElementById('lobbyRoomId')?.dataset.roomid ?? '');
+    const me = getSelfPlayer();
+    THEME_COLORS.forEach(c => {
+        const b = document.createElement('button');
+        b.className = 'swatch';
+        b.dataset.color = c;
+        b.style.cssText = 'width:28px;height:28px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px #ccc;cursor:pointer;background:' + c;
+        if (me && me.theme_color === c) b.style.boxShadow = '0 0 0 3px #f60';
+        b.addEventListener('click', () => {
+            socket.emit('mm_set_color', { room_id: rid, player_id: myPlayerId, color: c });
+            wrap.querySelectorAll('.swatch').forEach(s => s.style.boxShadow = '0 0 0 1px #ccc');
+            b.style.boxShadow = '0 0 0 3px #f60';
+        });
+        wrap.appendChild(b);
+    });
 }
 
 function renderLobbyPlayers(players) {
@@ -650,7 +712,7 @@ function renderLobbyPlayers(players) {
 
         li.innerHTML = `
             <span class="player-name">
-                <span class="player-dot"></span>
+                <span class="player-dot"${p.theme_color ? ' style="background:' + p.theme_color + '"' : ''}></span>
                 ${esc(p.name)}
                 ${nameTags.join(' ')}
             </span>

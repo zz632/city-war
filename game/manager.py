@@ -63,32 +63,41 @@ class RoomManager:
                 print(f'[Persistence] 定期保存异常: {e}')
     
     def create_room(self, player_name: str, player_sid: str, client_ip: str = '',
-                     password: str = '', max_players: int = 8) -> tuple:
-        """创建新房间"""
+                     password: str = '', max_players: int = 8, room_type: str = 'classic') -> tuple:
+        """创建新房间。room_type: classic=经典回合制 | map_mode=地图模式"""
         # 生成4位纯数字房间号，方便分享
         room_id = str(random.randint(1000, 9999))
         while room_id in self.rooms:
             room_id = str(random.randint(1000, 9999))
-        
+
         player = Player(
             id=player_sid,
             name=player_name,
             room_id=room_id,
             is_host=True
         )
-        
+
+        if room_type == 'map_mode':
+            # 地图模式：16 人以上大乱斗，最多 32 人
+            max_players = max(2, min(32, max_players))
         room = Room(
             id=room_id,
             name=f"房间-{room_id}",
             host_id=player_sid,
             players={player_sid: player},
-            max_players=max(2, min(8, max_players)),
-            password=password
+            max_players=max_players,
+            password=password,
+            room_type=room_type
         )
-        
+
         self.rooms[room_id] = room
         self.players[player_sid] = player
-        
+
+        # 地图模式：房间创建时即建局（选地大厅直接用地图）
+        if room_type == 'map_mode':
+            from game.mapmode import map_manager
+            map_manager.create_game(room)
+
         return room_id, player
     
     def join_room(self, room_id: str, player_name: str, player_sid: str,
@@ -114,6 +123,12 @@ class RoomManager:
                 # 游戏已开始且不允许中途加入，成为观战者
                 is_spectator = True
             # 允许中途加入时，以正常玩家身份加入
+        if room.room_type == 'map_mode':
+            # 地图模式：选地结束（已开打）后加入 → 观战
+            from game.mapmode import map_manager
+            g = map_manager.get(room_id)
+            if g and g.phase != 'picking':
+                is_spectator = True
 
         player = Player(
             id=player_sid,
@@ -181,7 +196,21 @@ class RoomManager:
             # 游戏可能未正确结束（如浏览器关闭），重置为等待状态
             room.game_state = None
 
-        # 初始化游戏状态
+        if room.room_type == 'map_mode':
+            # 地图模式：MapGame 已在建房时创建（选地大厅用），这里只重置玩家状态
+            room.game_state = None
+            # 重置玩家对局状态
+            for player in room.players.values():
+                if player.is_spectator:
+                    continue
+                player.is_alive = True
+                player.skills = []
+                player.alliance_with = None
+                player.action_history = []
+                player.status_effects = {}
+            return True
+
+        # 初始化游戏状态（经典模式）
         room.game_state = GameState(
             round=1,
             phase=GamePhase.ACTION

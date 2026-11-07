@@ -42,6 +42,10 @@ room_manager = RoomManager()
 
 init_socket_events(socketio, room_manager)
 
+# 地图模式引擎（每秒 tick 线程，需绑定 socketio 广播）
+from game.mapmode import map_manager
+map_manager.bind_socketio(socketio)
+
 # ===== 在线模式 & 用户系统 =====
 ONLINE_MODE = os.environ.get('ONLINE_MODE', '').lower() in ('1', 'true', 'yes')
 
@@ -821,6 +825,22 @@ def game(room_id):
     return render_template('game.html', room_id=room_id, skill_groups=skill_groups)
 
 
+@app.route('/mgame/<room_id>')
+def mgame(room_id):
+    # 地图模式游戏页（/map 渲染器改造版）
+    resp = send_from_directory('static/map', 'game.html')
+    resp.headers['Cache-Control'] = 'no-cache'
+    return resp
+
+
+@app.route('/game/mapmode/regions.json')
+def mm_regions_json():
+    # 地块元数据（引擎 regions.json 的只读下发）
+    resp = send_from_directory('game/mapmode', 'regions.json')
+    resp.headers['Cache-Control'] = 'no-cache'
+    return resp
+
+
 @app.route('/api/rooms', methods=['GET', 'POST'])
 def api_rooms():
     if request.method == 'GET':
@@ -834,8 +854,10 @@ def api_rooms():
     client_ip = request.remote_addr
     room_password = data.get('password', '')
     room_max = int(data.get('max_players', 8))
+    room_type = 'map_mode' if data.get('mode') == 'map_mode' else 'classic'
     result = room_manager.create_room(player_name, 'p_' + uuid.uuid4().hex[:12], client_ip,
-                                       password=room_password, max_players=room_max)
+                                       password=room_password, max_players=room_max,
+                                       room_type=room_type)
     if result[0] is None:
         return jsonify({'success': False, 'message': result[1]}), 403
 
@@ -846,7 +868,8 @@ def api_rooms():
         player.username = login_user
     return jsonify({
         'success': True,
-        'room': {'id': room_id, 'name': room_manager.rooms[room_id].name},
+        'room': {'id': room_id, 'name': room_manager.rooms[room_id].name,
+                 'room_type': room_manager.rooms[room_id].room_type},
         'player': player.to_dict()
     })
 
@@ -873,9 +896,10 @@ def api_join_room(room_id):
     if login_user:
         player.username = login_user
 
+    _room = room_manager.get_room(room_id)
     return jsonify({
         'success': True,
-        'room': {'id': room_id},
+        'room': {'id': room_id, 'room_type': _room.room_type if _room else 'classic'},
         'player': player.to_dict(),
         'is_spectator': player.is_spectator
     })

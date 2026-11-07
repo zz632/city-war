@@ -49,6 +49,12 @@ def _register():
         room = room_manager.get_room(player.room_id)
         if room and room.game_state and room.game_state.phase != GamePhase.WAITING:
             return
+        # 地图模式对局（含选地阶段）进行中不移除玩家
+        if room and room.room_type == 'map_mode':
+            from game.mapmode import map_manager
+            g = map_manager.get(room.id)
+            if g and g.phase != 'finished' and player_id in g.players:
+                return
         # 延迟移除：页面跳转会导致短暂断连，等5秒看是否重连
         def _delayed_leave():
             # 检查是否已重连（ws_player_map中有新sid映射到该player_id）
@@ -114,8 +120,37 @@ def _register():
             _emit('error_msg', {'message': '无法开始游戏'})
             return
 
+        if room.room_type == 'map_mode':
+            # 地图模式：校验选地冲突，冲突则广播重选；通过则进入 playing
+            from game.mapmode import map_manager
+            game = map_manager.get(room_id)
+            if not game:
+                _emit('error_msg', {'message': '对局不存在'}, room=request.sid)
+                return
+            active = [pid for pid, p in room.players.items() if not p.is_spectator]
+            ok2, res = game.try_start(active)
+            if not ok2:
+                if 'conflicts' in res:
+                    names = game.picks_view()['names']
+                    msg = '、'.join(
+                        '与'.join(names.get(q, q) for q in pids)
+                        for pids in res['conflicts'].values())
+                    _emit('mm_conflict', {
+                        'conflicts': res['conflicts'],
+                        'picks': game.picks_view(),
+                        'message': '选地冲突：%s 选了同一块地，请重新选地' % msg,
+                    }, room=room_id)
+                else:
+                    _emit('mm_conflict', {'message': res.get('error', '无法开始')}, room=room_id)
+                return
+            _emit('mm_picks', game.picks_view(), room=room_id)
+            _emit('mm_phase', {'phase': 'playing'}, room=room_id)
+            _mm_push_full(room.id, game, with_world=True)  # 开局带一次底图归属全量
+            return
+
         _emit('game_started', {
             'room_id': room_id,
+            'room_type': room.room_type,
             'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
         }, room=room_id)
 
@@ -414,6 +449,159 @@ def _register():
             'is_dead': not player.is_alive,
             'is_spectator': player.is_spectator or not player.is_alive
         }, room=room_id)
+
+    # ---- 地图模式 ----
+
+    def _mm_room(data):
+        """公共校验：返回 (room, game, player_id)，失败时回 error_msg"""
+        from game.mapmode import map_manager
+        room_id = str(data.get('room_id', '')).strip()
+        player_id = data.get('player_id', '')
+        room = room_manager.get_room(room_id)
+        if not room or room.room_type != 'map_mode':
+            _emit('error_msg', {'message': '地图模式房间不存在'}, room=request.sid)
+            return None, None, player_id
+        game = map_manager.get(room_id)
+        if not game:
+            _emit('error_msg', {'message': '对局不存在'}, room=request.sid)
+            return room, None, player_id
+        if player_id not in room.players:
+            _emit('error_msg', {'message': '玩家不存在'}, room=request.sid)
+            return room, game, player_id
+        return room, game, player_id
+
+    @socketio.on('mm_set_color')
+    def on_mm_set_color(data):
+        """大厅内选主题色：色池校验 + 先到先得唯一"""
+        room_id = str(data.get('room_id', '')).strip()
+        player_id = data.get('player_id', '')
+        color = str(data.get('color', '')).strip().lower()
+        room = room_manager.get_room(room_id)
+        player = room.players.get(player_id) if room else None
+        if not player or room.room_type != 'map_mode':
+            return
+        from game.mapmode.engine import THEME_COLORS
+        if color not in THEME_COLORS:
+            _emit('mm_error', {'message': '请从系统主题色中选择'}, room=request.sid)
+            return
+        for qpid, q in room.players.items():
+            if qpid != player_id and getattr(q, 'theme_color', '') == color:
+                _emit('mm_error', {'message': '该颜色已被 %s 选用，先到先得' % q.name}, room=request.sid)
+                return
+        player.theme_color = color
+        from game.mapmode import map_manager
+        game = map_manager.get(room_id)
+        if game:
+            game.set_color(player_id, color)
+            if game.phase == 'picking':
+                _emit('mm_picks', game.picks_view(), room=room_id)
+        _emit('lobby_update', {
+            'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
+        }, room=room_id)
+
+    def _mm_full_state(room, game, player_id, with_world=True):
+        """mm_state 载荷（join 带 world 底图全量；兜底/操作回传不带，归属走 mm_delta 增量）"""
+        return {
+            'room_id': room.id,
+            'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()},
+            'host_id': room.host_id,
+            'world': game.world_snapshot(player_id) if with_world else None,
+            'my': game.my_state(player_id),
+            'picks': game.picks_view() if game.phase == 'picking' else None,
+        }
+
+    def _mm_push_full(room_id, game, with_world=False):
+        """给对局内每个在线玩家推各自状态（tick 线程定期调用 / 进入 playing 时调用）"""
+        room = room_manager.get_room(room_id)
+        if not room:
+            return
+        sid_by_pid = {}
+        for sid, pid in list(ws_player_map.items()):
+            sid_by_pid.setdefault(pid, sid)
+        for pid in game.players:
+            sid = sid_by_pid.get(pid)
+            if sid:
+                socketio.emit('mm_state', _mm_full_state(room, game, pid, with_world=with_world), room=sid)
+
+    from game.mapmode import map_manager as _mmgr
+    _mmgr.full_state_cb = _mm_push_full
+
+    @socketio.on('mm_join')
+    def on_mm_join(data):
+        """地图模式游戏页加入：全量快照（选地阶段懒注册玩家）"""
+        room, game, player_id = _mm_room(data)
+        if not game or not room:
+            return
+        sio_join(str(data.get('room_id', '')).strip())
+        sio_join(player_id)
+        ws_player_map[request.sid] = player_id
+        rp = room.players.get(player_id)
+        if rp and not rp.is_spectator and player_id not in game.players \
+                and game.phase == 'picking':
+            game.add_player(player_id, rp.name, getattr(rp, 'theme_color', '') or '')
+            _emit('mm_picks', game.picks_view(), room=room.id)
+        _emit('mm_state', _mm_full_state(room, game, player_id), room=request.sid)
+
+    @socketio.on('mm_pick')
+    def on_mm_pick(data):
+        """选地：允许重复，选完广播公开选择视图"""
+        room, game, player_id = _mm_room(data)
+        if not game:
+            return
+        ok, msg = game.pick(player_id, data.get('region'))
+        if not ok:
+            _emit('mm_error', {'message': msg or '选地失败'}, room=request.sid)
+            return
+        _emit('mm_pick_ok', {'region': game.players[player_id].picked}, room=request.sid)
+        _emit('mm_picks', game.picks_view(), room=room.id)
+
+    @socketio.on('mm_region_info')
+    def on_mm_region_info(data):
+        """地块悬停情报查询"""
+        room, game, player_id = _mm_room(data)
+        if not game:
+            return
+        info = game.region_info(data.get('region'), player_id)
+        if info is not None:
+            _emit('mm_region_info', info, room=request.sid)
+
+    @socketio.on('mm_action')
+    def on_mm_action(data):
+        """统一操作入口: colonize / recruit / build / demolish / send"""
+        room, game, player_id = _mm_room(data)
+        if not game:
+            return
+        act = data.get('act')
+        args = data.get('args', {}) or {}
+        fn = {
+            'colonize': lambda: game.colonize(player_id, args.get('region')),
+            'recruit': lambda: game.recruit(player_id, args.get('region'), args.get('count', 0)),
+            'build': lambda: game.build(player_id, args.get('region'), args.get('type', '')),
+            'demolish': lambda: game.demolish(player_id, args.get('region'), args.get('type', '')),
+            'send': lambda: game.send_troops(player_id, args.get('from'), args.get('to'), args.get('count', 0)),
+        }.get(act)
+        if not fn:
+            _emit('mm_error', {'message': '未知操作'}, room=request.sid)
+            return
+        try:
+            ok, msg = fn()
+        except Exception:
+            import traceback
+            print('[MM_ACTION] %s 异常:' % act)
+            traceback.print_exc()
+            _emit('mm_error', {'message': '服务器内部错误'}, room=request.sid)
+            return
+        if not ok:
+            _emit('mm_error', {'message': msg or '操作失败'}, room=request.sid)
+        else:
+            # 操作后立即回传该玩家的完整状态（资金/地块详情/归属快照），只发本人、不带底图
+            try:
+                _emit('mm_state', _mm_full_state(room, game, player_id, with_world=False), room=request.sid)
+            except Exception:
+                import traceback
+                print('[MM_ACTION] %s 回传异常:' % act)
+                traceback.print_exc()
+                _emit('mm_error', {'message': '服务器内部错误'}, room=request.sid)
 
     # ---- 游戏 ----
 
