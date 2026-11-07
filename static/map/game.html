@@ -214,6 +214,7 @@ function myColor(){return pColor(MY_PID)}
 function isHost(){return MY_PID&&HOST_ID===MY_PID}
 
 // ---------- socket 事件 ----------
+let focusedOnPlay=false; // 只在首次进入对局时自动定位：mm_state 每5秒兜底推送，不能每次都拉回视角
 socket.on("mm_state",d=>{
   HOST_ID=d.host_id||HOST_ID;
   if(d.players)PLAYERS=d.players;
@@ -227,7 +228,8 @@ socket.on("mm_state",d=>{
   if(d.picks)applyPicks(d.picks);
   renderIsland();refreshTip();renderPanel();
   if(PHASE==="picking")showBanner("选地阶段：点击地图选择出生地 · 一人一块");
-  if(PHASE==="playing")focusMyRegion();
+  if(PHASE!=="playing")focusedOnPlay=false;
+  else if(!focusedOnPlay){focusedOnPlay=true;focusMyRegion()}
 });
 socket.on("mm_delta",d=>{
   if(d.owners)for(const k in d.owners){
@@ -249,9 +251,10 @@ socket.on("mm_delta",d=>{
 });
 socket.on("mm_phase",d=>{
   PHASE=d.phase;
+  if(d.phase!=="playing")focusedOnPlay=false;
   if(d.phase==="playing"){
     hideBanner();showBanner("游戏开始！",2600);setTimeout(hideBanner,2800);
-    focusMyRegion();
+    if(!focusedOnPlay){focusedOnPlay=true;focusMyRegion()}
   }
   renderIsland();refreshTip();renderPanel();schedule();
 });
@@ -534,10 +537,13 @@ const BLD={
 
 // ---------- 二进制数据（与 /map 渲染器一致） ----------
 let BOX,FR,ROFF,C,FR2,ROFF2,C2,FRr,ROFFr,Cr,nf=0;
-let WB,WF,WROFF,WC,WB2,WF2,WROFF2,WC2,RB,RF,RC,RW1,RB2,RF2,RC2,RW2,nl=0,nriv=0,nriv2=0;
+let WB,WF,WROFF,WC,WB2,WF2,WROFF2,WC2,RB,RF,RC,RW1,RB2,RF2,RC2,RW2,nl=0,nl2=0,nriv=0,nriv2=0;
 let ATAI=-1;
 let DATAV="0b151c46a52757b6ea65c6bb99aeb3e5";
 let WATERV="a684fa86757ab29552e6ef9131aa4a0d";
+const SNAPV=2; // 快照渲染版本：底图样式/投影变更时 +1 使缓存失效
+function isGz(b){try{const u=new Uint8Array(b,0,2);return u[0]===0x1f&&u[1]===0x8b}catch(e){return false}}
+async function gunzip(b){const ds=new Blob([b]).stream().pipeThrough(new DecompressionStream("gzip"));return await new Response(ds).arrayBuffer()}
 function idbOpen(){
   return new Promise((res,rej)=>{
     const r=indexedDB.open("worldmap",1);
@@ -661,9 +667,9 @@ async function loadFromNpm(url){
   }finally{clearTimeout(tm);}
 }
 async function loadData(){
-  let buf=await idbGet("bin",DATAV);
-  let wbuf=await idbGet("water",WATERV);
-  if(!buf||!wbuf){
+  let [buf,wbuf]=await Promise.all([idbGet("bin",DATAV),idbGet("water",WATERV)]);
+  const fresh=!buf||!wbuf;
+  if(fresh){
     for(const u of TGZS){
       if(buf&&wbuf)break;
       try{
@@ -684,14 +690,13 @@ async function loadData(){
     if(!wbuf){
       try{ wbuf=await fetchResumable("/static/map/map_water.bin", []); }catch(e){}
     }
-    if(buf)idbSave(buf,"bin",DATAV);
-    if(wbuf)idbSave(wbuf,"water",WATERV);
   }
-  const u8=new Uint8Array(buf);
-  if(u8[0]===0x1f&&u8[1]===0x8b){
-    const ds=new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"));
-    buf=await new Response(ds).arrayBuffer();
-  }
+  // 统一解压；缓存改存解压后数据——之后每次进入免解压、免重复写入
+  let updB=false,updW=false;
+  if(buf&&isGz(buf)){buf=await gunzip(buf);updB=true}
+  if(wbuf&&isGz(wbuf)){wbuf=await gunzip(wbuf);updW=true}
+  if(buf&&(fresh||updB))idbSave(buf,"bin",DATAV);
+  if(wbuf&&(fresh||updW))idbSave(wbuf,"water",WATERV);
   const dv=new DataView(buf);
   const jl=dv.getUint32(8,true);
   const meta=JSON.parse(new TextDecoder("utf-8").decode(new Uint8Array(buf,12,jl)));
@@ -713,16 +718,11 @@ async function loadData(){
   for(let i=0;i<nf;i++){BOX[i*4+1]+=Y_SHIFT;BOX[i*4+3]+=Y_SHIFT}
   if(wbuf){
     try{
-      const w8=new Uint8Array(wbuf);
-      if(w8[0]===0x1f&&w8[1]===0x8b){
-        const ds=new Blob([wbuf]).stream().pipeThrough(new DecompressionStream("gzip"));
-        wbuf=await new Response(ds).arrayBuffer();
-      }
       const wd=new DataView(wbuf);
       const wjl=wd.getUint32(8,true);
       const wm=JSON.parse(new TextDecoder("utf-8").decode(new Uint8Array(wbuf,12,wjl)));
       let wo=12+wjl; while(wo%4)wo++;
-      nl=wm.nl;
+      nl=wm.nl;nl2=wm.nl2||0;
       WB=new Float32Array(wbuf,wo,nl*4); wo+=nl*16;
       WF=new Int32Array(wbuf,wo,nl+1); wo+=(nl+1)*4;
       WROFF=new Int32Array(wbuf,wo,wm.nring+1); wo+=(wm.nring+1)*4;
@@ -876,7 +876,7 @@ function drawLand(cand,wx0,wx1,wy0,wy1){
   ctx.stroke();
 }
 // ---------- 整图快照 ----------
-let snap=null,snapJob=null;
+let snap=null,snapCoarse=false,snapJob=null,aWF=null,aWROFF=null,aWC=null,aRF=null,aRC=null,aRW1=null;
 function paintLandChunk(g,from,to){
   g.lineWidth=.6;g.strokeStyle="rgba(70,68,60,.35)";g.lineJoin="round";
   const arr=[];
@@ -889,10 +889,10 @@ function paintLakeChunk(g,from,to){
   g.fillStyle=SEAC;
   for(let i=from;i<to;i++){
     g.beginPath();
-    for(let r=WF[i];r<WF[i+1];r++){
-      const s=WROFF[r]*2,t=WROFF[r+1]*2;
-      g.moveTo(WC[s],WC[s+1]);
-      for(let p=s+2;p<t;p+=2)g.lineTo(WC[p],WC[p+1]);
+    for(let r=aWF[i];r<aWF[i+1];r++){
+      const s=aWROFF[r]*2,t=aWROFF[r+1]*2;
+      g.moveTo(aWC[s],aWC[s+1]);
+      for(let p=s+2;p<t;p+=2)g.lineTo(aWC[p],aWC[p+1]);
       g.closePath();
     }
     g.fill("evenodd");
@@ -903,10 +903,10 @@ function paintRiverChunk(g,from,to){
   for(let w=0;w<3;w++){
     g.beginPath();let any=false;
     for(let i=from;i<to;i++){
-      if((RW1[i]||0)!==w)continue;
-      const s=RF[i]*2,t=RF[i+1]*2;
-      g.moveTo(RC[s],RC[s+1]);
-      for(let p=s+2;p<t;p+=2)g.lineTo(RC[p],RC[p+1]);
+      if((aRW1[i]||0)!==w)continue;
+      const s=aRF[i]*2,t=aRF[i+1]*2;
+      g.moveTo(aRC[s],aRC[s+1]);
+      for(let p=s+2;p<t;p+=2)g.lineTo(aRC[p],aRC[p+1]);
       any=true;
     }
     if(any){g.lineWidth=RIVW[w]||1.1;g.stroke()}
@@ -914,11 +914,13 @@ function paintRiverChunk(g,from,to){
 }
 function startSnapBuild(){
   if(snapJob||snap||!nf)return;
-  const c=document.createElement("canvas");
-  c.width=W;c.height=H;
-  const sc=c.getContext("2d");
-  sc.fillStyle="#a6cbe2";sc.fillRect(0,0,W,H);
-  snapJob={c,sc,land:0,lake:0,river:0,phase:0};
+  // 两级快照：先建 2048 粗快照（用粗略几何，秒级出图），再后台建 4096 精细快照替换
+  const CW=2048,CH=Math.max(1,Math.round(H*CW/W));
+  const c2=document.createElement("canvas");c2.width=CW;c2.height=CH;
+  const s2=c2.getContext("2d");s2.fillStyle="#a6cbe2";s2.fillRect(0,0,CW,CH);
+  const c=document.createElement("canvas");c.width=W;c.height=H;
+  const s1=c.getContext("2d");s1.fillStyle="#a6cbe2";s1.fillRect(0,0,W,H);
+  snapJob={c,s1,c2,s2,ph:0,land:0,lake:0,river:0,coarseDone:false};
   requestAnimationFrame(pumpSnap);
 }
 function pumpSnap(){
@@ -926,62 +928,123 @@ function pumpSnap(){
   if(idleT){ requestAnimationFrame(pumpSnap); return; }
   const t0=performance.now();
   const sCtx=ctx,sOx=OX,sOy=oy,sSc=scale,sFRr=FRr,sROFFr=ROFFr,sCr=Cr;
-  ctx=j.sc;OX=0;oy=0;scale=1;FRr=FR;ROFFr=ROFF;Cr=C;
+  const sWF=aWF,sWR=aWROFF,sWC=aWC,sRF=aRF,sRC=aRC,sRW=aRW1;
+  if(j.ph<3){ // 粗快照：粗略几何
+    ctx=j.s2;OX=0;oy=0;scale=j.c2.width/W;FRr=FR2;ROFFr=ROFF2;Cr=C2;
+    aWF=WF2;aWROFF=WROFF2;aWC=WC2;aRF=RF2;aRC=RC2;aRW1=RW2;
+  }else{      // 精细快照
+    ctx=j.s1;OX=0;oy=0;scale=1;FRr=FR;ROFFr=ROFF;Cr=C;
+    aWF=WF;aWROFF=WROFF;aWC=WC;aRF=RF;aRC=RC;aRW1=RW1;
+  }
   try{
-    while(performance.now()-t0<12){
-      if(j.phase===0){
-        const to=Math.min(nf,j.land+600);
-        paintLandChunk(j.sc,j.land,to);j.land=to;
-        if(j.land>=nf)j.phase=1;
-      }else if(j.phase===1){
-        const to=Math.min(nl,j.lake+200);
-        paintLakeChunk(j.sc,j.lake,to);j.lake=to;
-        if(j.lake>=nl)j.phase=2;
-      }else{
-        const to=Math.min(nriv,j.river+400);
-        paintRiverChunk(j.sc,j.river,to);j.river=to;
-        if(j.river>=nriv)j.phase=3;
+    while(performance.now()-t0<12&&j.ph<6){
+      if(j.ph===0||j.ph===3){
+        const to=Math.min(nf,j.land+(j.ph===0?800:600));
+        paintLandChunk(ctx,j.land,to);j.land=to;
+        if(j.land>=nf)j.ph++;
+      }else if(j.ph===1||j.ph===4){
+        const n=(j.ph===1)?nl2:nl,to=Math.min(n,j.lake+(j.ph===1?400:200));
+        paintLakeChunk(ctx,j.lake,to);j.lake=to;
+        if(j.lake>=n)j.ph++;
+      }else if(j.ph===2||j.ph===5){
+        const n=(j.ph===2)?nriv2:nriv,to=Math.min(n,j.river+(j.ph===2?800:400));
+        paintRiverChunk(ctx,j.river,to);j.river=to;
+        if(j.river>=n)j.ph++;
       }
-      if(j.phase>=3)break;
+      if(j.ph===3&&!j.coarseDone){ // 粗快照完成：立即上屏
+        j.coarseDone=true;j.land=0;j.lake=0;j.river=0;
+        snap=j.c2;snapCoarse=true;schedule();break;
+      }
     }
   }catch(e){ console.error("快照构建失败",e); snapJob=null;
-    ctx=sCtx;OX=sOx;oy=sOy;scale=sSc;FRr=sFRr;ROFFr=sROFFr;Cr=sCr;return; }
+    ctx=sCtx;OX=sOx;oy=sOy;scale=sSc;FRr=sFRr;ROFFr=sROFFr;Cr=sCr;
+    aWF=sWF;aWROFF=sWR;aWC=sWC;aRF=sRF;aRC=sRC;aRW1=sRW;return; }
   ctx=sCtx;OX=sOx;oy=sOy;scale=sSc;FRr=sFRr;ROFFr=sROFFr;Cr=sCr;
-  if(j.phase>=3){snap=j.c;snapJob=null;schedule()}
+  aWF=sWF;aWROFF=sWR;aWC=sWC;aRF=sRF;aRC=sRC;aRW1=sRW;
+  if(j.ph>=6){ // 精细快照完成：替换并持久化到 IndexedDB，下次进入免重绘
+    snap=j.c;snapCoarse=false;snapJob=null;schedule();
+    try{j.c.toBlob(b=>{if(b)idbSave(b,"snap",SNAPV+"|"+DATAV+"|"+WATERV)},"image/png")}catch(e){}
+  }
   else requestAnimationFrame(pumpSnap);
+}
+async function loadCachedSnap(){
+  try{
+    const blob=await idbGet("snap",SNAPV+"|"+DATAV+"|"+WATERV);
+    if(!blob)return false;
+    snapCoarse=false; // 缓存快照始终是精细版
+    if(window.createImageBitmap){snap=await createImageBitmap(blob);return true}
+    const url=URL.createObjectURL(blob);const img=new Image();
+    await new Promise((res,rej)=>{img.onload=res;img.onerror=rej;img.src=url});
+    snap=img;return true;
+  }catch(e){return false}
 }
 // ---------- 水体 ----------
 const SEAC="#a6cbe2", RIVW=[1.1,1.7,2.5];
-function drawWater(z,wx0,wx1,wy0,wy1){
-  if(!nl&&!nriv)return;
-  ctx.fillStyle=SEAC;ctx.strokeStyle=SEAC;ctx.lineCap="round";ctx.lineJoin="round";
-  if(nl){
-    for(let i=0;i<nl;i++){
-      const a=WB[i*4],b=WB[i*4+1],e=WB[i*4+2],d=WB[i*4+3];
-      if(e<wx0||a>wx1||d<wy0||b>wy1)continue;
-      ctx.beginPath();
-      for(let r=WF[i];r<WF[i+1];r++){
-        const s=WROFF[r]*2,t=WROFF[r+1]*2;
-        ctx.moveTo(WC[s]*scale+OX,WC[s+1]*scale+oy);
-        for(let p=s+2;p<t;p+=2)ctx.lineTo(WC[p]*scale+OX,WC[p+1]*scale+oy);
-        ctx.closePath();
-      }
-      ctx.fill("evenodd");
-    }
-  }
-  if(nriv){
-    for(let w=0;w<3;w++){
-      ctx.beginPath();let any=false;
-      for(let i=0;i<nriv;i++){
-        if((RW1[i]||0)!==w)continue;
-        const a=RB[i*4],b=RB[i*4+1],e=RB[i*4+2],d=RB[i*4+3];
+function drawWater(fine,wx0,wx1,wy0,wy1){
+  if(fine){
+    if(!nl&&!nriv)return;
+    ctx.fillStyle=SEAC;ctx.strokeStyle=SEAC;ctx.lineCap="round";ctx.lineJoin="round";
+    if(nl){
+      for(let i=0;i<nl;i++){
+        const a=WB[i*4],b=WB[i*4+1],e=WB[i*4+2],d=WB[i*4+3];
         if(e<wx0||a>wx1||d<wy0||b>wy1)continue;
-        const s=RF[i]*2,t=RF[i+1]*2;
-        ctx.moveTo(RC[s]*scale+OX,RC[s+1]*scale+oy);
-        for(let p=s+2;p<t;p+=2)ctx.lineTo(RC[p]*scale+OX,RC[p+1]*scale+oy);
-        any=true;
+        ctx.beginPath();
+        for(let r=WF[i];r<WF[i+1];r++){
+          const s=WROFF[r]*2,t=WROFF[r+1]*2;
+          ctx.moveTo(WC[s]*scale+OX,WC[s+1]*scale+oy);
+          for(let p=s+2;p<t;p+=2)ctx.lineTo(WC[p]*scale+OX,WC[p+1]*scale+oy);
+          ctx.closePath();
+        }
+        ctx.fill("evenodd");
       }
-      if(any){ctx.lineWidth=RIVW[w]||1.1;ctx.stroke()}
+    }
+    if(nriv){
+      for(let w=0;w<3;w++){
+        ctx.beginPath();let any=false;
+        for(let i=0;i<nriv;i++){
+          if((RW1[i]||0)!==w)continue;
+          const a=RB[i*4],b=RB[i*4+1],e=RB[i*4+2],d=RB[i*4+3];
+          if(e<wx0||a>wx1||d<wy0||b>wy1)continue;
+          const s=RF[i]*2,t=RF[i+1]*2;
+          ctx.moveTo(RC[s]*scale+OX,RC[s+1]*scale+oy);
+          for(let p=s+2;p<t;p+=2)ctx.lineTo(RC[p]*scale+OX,RC[p+1]*scale+oy);
+          any=true;
+        }
+        if(any){ctx.lineWidth=RIVW[w]||1.1;ctx.stroke()}
+      }
+    }
+  }else{
+    // 粗略水体：交互期每帧重绘用，大幅降低绘制量
+    if(!nl2&&!nriv2)return;
+    ctx.fillStyle=SEAC;ctx.strokeStyle=SEAC;ctx.lineCap="round";ctx.lineJoin="round";
+    if(nl2){
+      for(let i=0;i<nl2;i++){
+        const a=WB2[i*4],b=WB2[i*4+1],e=WB2[i*4+2],d=WB2[i*4+3];
+        if(e<wx0||a>wx1||d<wy0||b>wy1)continue;
+        ctx.beginPath();
+        for(let r=WF2[i];r<WF2[i+1];r++){
+          const s=WROFF2[r]*2,t=WROFF2[r+1]*2;
+          ctx.moveTo(WC2[s]*scale+OX,WC2[s+1]*scale+oy);
+          for(let p=s+2;p<t;p+=2)ctx.lineTo(WC2[p]*scale+OX,WC2[p+1]*scale+oy);
+          ctx.closePath();
+        }
+        ctx.fill("evenodd");
+      }
+    }
+    if(nriv2){
+      for(let w=0;w<3;w++){
+        ctx.beginPath();let any=false;
+        for(let i=0;i<nriv2;i++){
+          if((RW2[i]||0)!==w)continue;
+          const a=RB2[i*4],b=RB2[i*4+1],e=RB2[i*4+2],d=RB2[i*4+3];
+          if(e<wx0||a>wx1||d<wy0||b>wy1)continue;
+          const s=RF2[i]*2,t=RF2[i+1]*2;
+          ctx.moveTo(RC2[s]*scale+OX,RC2[s+1]*scale+oy);
+          for(let p=s+2;p<t;p+=2)ctx.lineTo(RC2[p]*scale+OX,RC2[p+1]*scale+oy);
+          any=true;
+        }
+        if(any){ctx.lineWidth=RIVW[w]||1.1;ctx.stroke()}
+      }
     }
   }
 }
@@ -1021,7 +1084,7 @@ function drawOwnership(){
       b.push(i);
     }
   }
-  FRr=FR;ROFFr=ROFF;Cr=C;
+  // FRr/ROFFr/Cr 由 drawOverlay 按底图精度统一设置，避免涂色层与底图边界错位
   ctx.lineWidth=1;ctx.strokeStyle="rgba(40,38,32,.45)";
   for(const [col,arr] of buckets){
     ctx.beginPath();
@@ -1106,10 +1169,14 @@ function drawUnits(){
 }
 function drawOverlay(){
   const vw=cv.width/DPR,vh=cv.height/DPR;
+  // 涂色/选框与底图保持同一精度：交互期底图为粗略几何时覆盖层也用粗略，消除边界偏移
+  const zoomed=(vw/scale)<W*0.15||scale>1.25;
+  const ovCoarse=zoomed?!!idleT:snapCoarse;
+  const sFR=ovCoarse?FR2:FR,sRO=ovCoarse?ROFF2:ROFF,sC=ovCoarse?C2:C;
   const savedOX=OX;
   for(const oxOff of copiesVisible()){
     OX=oxOff;
-    FRr=FR;ROFFr=ROFF;Cr=C;
+    FRr=sFR;ROFFr=sRO;Cr=sC;
     drawOwnership();
   }
   OX=savedOX;
@@ -1120,7 +1187,7 @@ function drawOverlay(){
     ctx.lineWidth=2.5;ctx.strokeStyle="rgba(200,40,25,"+(0.6+0.35*Math.sin(t/250))+")";
     for(const ci of CONFLICTS){
       for(const oxOff of copiesVisible()){
-        OX=oxOff;FRr=FR;ROFFr=ROFF;Cr=C;
+        OX=oxOff;FRr=sFR;ROFFr=sRO;Cr=sC;
         strokePoly(ci);ctx.stroke();
       }
     }
@@ -1129,7 +1196,7 @@ function drawOverlay(){
   // 选中框
   if(SEL>=0&&REG[SEL]){
     for(const oxOff of copiesVisible()){
-      OX=oxOff;FRr=FR;ROFFr=ROFF;Cr=C;
+      OX=oxOff;FRr=sFR;ROFFr=sRO;Cr=sC;
       ctx.lineWidth=2.5;ctx.strokeStyle=SELC;
       ctx.setLineDash([6,4]);ctx.lineDashOffset=-performance.now()/60;
       strokePoly(SEL);ctx.stroke();
@@ -1139,7 +1206,7 @@ function drawOverlay(){
   // hover
   if(hovI>=0&&hovI!==SEL&&REG[hovI]){
     for(const oxOff of [hovOX]){
-      OX=oxOff;FRr=FR;ROFFr=ROFF;Cr=C;
+      OX=oxOff;FRr=sFR;ROFFr=sRO;Cr=sC;
       ctx.fillStyle=HOV;
       strokePoly(hovI);ctx.fill();
     }
@@ -1534,12 +1601,13 @@ window.addEventListener("unhandledrejection",e=>{
   const T0=performance.now();
   try{
     loadRegions().catch(()=>{});
-    hud.textContent="下载数据…";await yieldUI();
+    hud.textContent="读取数据…";await yieldUI();
     await loadData();
     hud.textContent="建索引…";await yieldUI();
     buildGrid();
+    const cached=await loadCachedSnap(); // 命中缓存快照则地图秒出，免分帧重绘
     resize();
-    startSnapBuild();
+    if(!cached)startSnapBuild();
     const el=((performance.now()-T0)/1000).toFixed(1);
     hud.textContent="城池战争 · 地图模式 · 拖动平移 / 滚轮缩放 (加载 "+el+"s)";
     renderIsland();

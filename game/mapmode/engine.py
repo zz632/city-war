@@ -99,6 +99,7 @@ class MapGame:
         self.regions = {}       # i -> RegionState（仅被占/有驻军的地块）
         self.armies = []        # 行军中的军队
         self.battles = {}       # i -> battle dict
+        self.pending_regions = set()  # tick 外的直接操作（殖民/出兵）待广播的地块
         self.next_army_id = 1
         self.lock = threading.RLock()
         self.winner = None
@@ -242,6 +243,7 @@ class MapGame:
                     'garrison': pid, 'conquest': False, 'recruited': 0.0,
                     'b': {}, 'queue': [], 'public_mil': True,
                 }
+            self.pending_regions.add(region_i)
             return True, ''
 
     # ---------- 征兵 ----------
@@ -330,6 +332,7 @@ class MapGame:
             if not path:
                 return False, '无陆路可达（跨海需港口，尚未实装）'
             r['troops'] -= count
+            self.pending_regions.add(from_i)  # 兵力清零时归属显示需随增量更新
             dist = sum(mdata.segment_km(path[k], path[k + 1]) for k in range(len(path) - 1))
             self.armies.append({
                 'id': self.next_army_id, 'pid': pid, 'troops': count,
@@ -348,6 +351,10 @@ class MapGame:
                 return None
             dirty_regions = set()
             dirty_players = set()
+            # 收拢 tick 外直接操作（殖民/出兵）标记的地块，随本秒增量广播
+            if self.pending_regions:
+                dirty_regions |= self.pending_regions
+                self.pending_regions = set()
 
             # 1) 收入 + 农场人口 + 兵耗 + 建造进度
             for i, r in self.regions.items():
