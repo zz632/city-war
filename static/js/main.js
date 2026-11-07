@@ -43,6 +43,31 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (page === 'game') initGame();
 });
 
+// ===== 房间身份传递（避免 URL 携带 pid/token）=====
+// 跳转前写入 sessionStorage，目标页读取；跨标签页/重启浏览器由 localStorage 的 last_game 兜底
+function saveRoomEntry(roomId, pid) {
+    try {
+        sessionStorage.setItem('cw_entry_' + roomId, JSON.stringify({
+            pid: pid, t: Date.now()
+        }));
+    } catch (e) {}
+}
+
+function loadRoomEntry(roomId) {
+    try {
+        const raw = sessionStorage.getItem('cw_entry_' + roomId);
+        if (raw) return JSON.parse(raw);
+    } catch (e) {}
+    // 兜底：回到上次对局
+    try {
+        const last = JSON.parse(localStorage.getItem('citywar_last_game') || 'null');
+        if (last && last.room === roomId && last.pid && Date.now() - (last.t || 0) < 24 * 3600 * 1000) {
+            return { pid: last.pid };
+        }
+    } catch (e) {}
+    return null;
+}
+
 // ===== Toast =====
 function toast(msg, type = 'info') {
     const el = document.getElementById('toast');
@@ -151,6 +176,13 @@ function initHome() {
     }
     const roomCodeInput = document.getElementById('roomCode');
 
+    // 从房间页跳回（无身份）时自动预填房间号，走加入流程
+    const presetRoom = urlParams.get('room');
+    if (presetRoom) {
+        roomCodeInput.value = presetRoom;
+        window.history.replaceState({}, '', '/');
+    }
+
     enterBtn.addEventListener('click', () => {
         const name = isOnlineMode ? loggedInDisplayName : playerNameInput.value.trim();
         if (!name) {
@@ -217,7 +249,8 @@ async function checkRejoinLastGame() {
         btn.style.display = 'flex';
         btn.onclick = () => {
             const base = inGame ? '/game/' : '/lobby/';
-            window.location.href = base + last.room + '?pid=' + last.pid + (authToken ? '&token=' + authToken : '');
+            saveRoomEntry(last.room, last.pid);
+            window.location.href = base + last.room;
         };
     } catch (e) {}
 }
@@ -398,12 +431,12 @@ async function createRoom(name, mode) {
         if (data.success) {
             myPlayerId = data.player.id;
             myRoomId = data.room.id;
-            const tokenParam = authToken ? '&token=' + authToken : '';
+            saveRoomEntry(myRoomId, myPlayerId);
             if ((mode || 'classic') === 'map_mode') {
                 // 地图模式：房间页即地图（选地大厅）
-                window.location.href = '/mgame/' + myRoomId + '?pid=' + myPlayerId + tokenParam;
+                window.location.href = '/mgame/' + myRoomId;
             } else {
-                window.location.href = '/lobby/' + myRoomId + '?pid=' + myPlayerId + tokenParam;
+                window.location.href = '/lobby/' + myRoomId;
             }
         } else {
             toast(data.message || '创建失败', 'error');
@@ -442,15 +475,15 @@ async function _doJoinRoom(name, code, password) {
         if (data.success) {
             myPlayerId = data.player.id;
             myRoomId = code;
-            const tokenParam = authToken ? '&token=' + authToken : '';
+            saveRoomEntry(myRoomId, myPlayerId);
             const roomType = (data.room && data.room.room_type) || 'classic';
             if (roomType === 'map_mode') {
                 // 地图模式：房间页即地图（选地大厅）
-                window.location.href = '/mgame/' + myRoomId + '?pid=' + myPlayerId + tokenParam;
+                window.location.href = '/mgame/' + myRoomId;
             } else if (data.is_spectator) {
-                window.location.href = '/game/' + myRoomId + '?pid=' + myPlayerId + tokenParam;
+                window.location.href = '/game/' + myRoomId;
             } else {
-                window.location.href = '/lobby/' + myRoomId + '?pid=' + myPlayerId + tokenParam;
+                window.location.href = '/lobby/' + myRoomId;
             }
         } else if (data.need_password) {
             const pw = prompt('密码错误，请重新输入：');
@@ -500,8 +533,13 @@ function appendChat(data) {
 // ===== 大厅页 =====
 function initLobby() {
     const roomId = document.getElementById('lobbyRoomId')?.dataset.roomid;
-    const params = new URLSearchParams(window.location.search);
-    myPlayerId = params.get('pid');
+    const entry = roomId ? loadRoomEntry(roomId) : null;
+    if (!entry || !entry.pid) {
+        // 无身份（直接打开链接/新标签页）：回首页预填房间号走加入流程
+        window.location.href = '/?room=' + encodeURIComponent(roomId || '');
+        return;
+    }
+    myPlayerId = entry.pid;
     myRoomId = roomId;
 
     if (!roomId) return;
@@ -544,10 +582,11 @@ function initLobby() {
     });
 
     socket.on('game_started', data => {
+        saveRoomEntry(roomId, myPlayerId);
         if (data.room_type === 'map_mode') {
-            window.location.href = '/mgame/' + roomId + '?pid=' + myPlayerId;
+            window.location.href = '/mgame/' + roomId;
         } else {
-            window.location.href = '/game/' + roomId + '?pid=' + myPlayerId;
+            window.location.href = '/game/' + roomId;
         }
     });
 
@@ -883,8 +922,13 @@ function closeRoomSettings() {
 // ===== 游戏页 =====
 function initGame() {
     const roomId = document.getElementById('gameRoomId')?.dataset.roomid;
-    const params = new URLSearchParams(window.location.search);
-    myPlayerId = params.get('pid');
+    const entry = roomId ? loadRoomEntry(roomId) : null;
+    if (!entry || !entry.pid) {
+        // 无身份（直接打开链接/新标签页）：回首页预填房间号走加入流程
+        window.location.href = '/?room=' + encodeURIComponent(roomId || '');
+        return;
+    }
+    myPlayerId = entry.pid;
     myRoomId = roomId;
 
     if (!roomId) return;
@@ -951,7 +995,8 @@ function initGame() {
 
     socket.on('back_to_lobby', data => {
         // 游戏结束，所有人回到大厅
-        window.location.href = '/lobby/' + myRoomId + '?pid=' + myPlayerId;
+        saveRoomEntry(myRoomId, myPlayerId);
+        window.location.href = '/lobby/' + myRoomId;
     });
 
     socket.on('skill_used', data => {
