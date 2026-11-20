@@ -317,6 +317,10 @@ function myStats(){
   for(const a of ARMIES)if(a.pid===MY_PID)army+=a.troops;
   return {money:MY&&MY.me?MY.me.money:0,pop,army,land};
 }
+// 每秒增量广播都会触发 UI 刷新：内容没变就不动 DOM，避免每秒布局重算造成卡顿
+function setHTMLIfChanged(el,h){
+  if(el._lastHtml!==h){el._lastHtml=h;el.innerHTML=h}
+}
 function renderIsland(){
   islandEl.classList.toggle("open",ISLAND_OPEN);
   document.getElementById("pillHint").textContent=ISLAND_OPEN?"收起":"展开";
@@ -376,7 +380,7 @@ function renderIsland(){
   h+='<h4>房间</h4><div class="rid"><b>'+esc(ROOM_ID)+'</b>'
     +'<button class="ghost" onclick="copyInvite()">邀请</button>'
     +'<button class="ghost" onclick="quitGame()">退出</button></div>';
-  islandBody.innerHTML=h;
+  setHTMLIfChanged(islandBody,h);
 }
 function colorSwatches(){
   let h="";
@@ -496,7 +500,7 @@ function needIntel(i){
 }
 function refreshTip(){
   if(hovI>=0&&REG[hovI]&&!IS_TOUCH){
-    tip.innerHTML=tipHTML(hovI);
+    setHTMLIfChanged(tip,tipHTML(hovI));
     if(needIntel(hovI))socket.emit("mm_region_info",{room_id:ROOM_ID,player_id:MY_PID,region:hovI});
   }
 }
@@ -1059,6 +1063,9 @@ function copiesVisible(){
 }
 function drawOwnership(){
   if(!nf)return;
+  // 视口剔除：只填充可视范围内的地块，领土多时每帧成本不随总领土数增长
+  const vw=cv.width/DPR,vh=cv.height/DPR;
+  const wx0=(0-OX)/scale-8,wx1=(vw-OX)/scale+8,wy0=(0-oy)/scale-8,wy1=(vh-oy)/scale+8;
   const buckets=new Map();   // color -> [i]
   if(PHASE==="picking"){
     // 选地阶段：按选择者主题色着色（同一地块取第一个选择者）
@@ -1077,6 +1084,8 @@ function drawOwnership(){
     for(const k in WORLD){
       const i=+k;
       const v=WORLD[k];
+      const xa=BOX[i*4],xb=BOX[i*4+1],xe=BOX[i*4+2],xd=BOX[i*4+3];
+      if(xe<wx0||xa>wx1||xd<wy0||xb>wy1)continue;
       const col=pColor(v[0])||(v[1]!=null?pColor(v[1]):null);
       if(!col)continue;
       let b=buckets.get(col);
@@ -1263,7 +1272,11 @@ function draw(){
     }
   }else{
     const fine=!idleT;
-    if(!fine&&lastFine&&lastFS.scale>0){
+    const viewChanged=!lastFine||lastFS.scale<=0||scale!==lastFS.scale||ox!==lastFS.ox||oy!==lastFS.oy;
+    if(!viewChanged){
+      // 视图未变（每秒增量广播触发的重绘）：直接复用上帧底图，仅覆盖层重绘，消除周期性卡顿
+      ctx.drawImage(lastFine,0,0,vw,vh);
+    }else if(!fine&&lastFine&&lastFS.scale>0){
       const f=scale/lastFS.scale;
       ctx.drawImage(lastFine,ox-lastFS.ox*f,oy-lastFS.oy*f,vw*f,vh*f);
     }else{
@@ -1290,7 +1303,7 @@ function draw(){
           drawWater(fine,wx0,wx1,wy0,wy1);
         }catch(e){}
       }
-      if(lastFine&&(scale!==lastFS.scale||ox!==lastFS.ox||oy!==lastFS.oy)&&(fine||lastFS.scale<=0)){
+      if((fine||lastFS.scale<=0)&&lastFine){
         const lc=lastFine.getContext("2d");
         lc.setTransform(1,0,0,1,0,0);
         lc.clearRect(0,0,lastFine.width,lastFine.height);
@@ -1339,7 +1352,7 @@ cv.addEventListener("mousemove",e=>{
     if(i!==hovI){hovI=i;schedule()}
     tip.style.display="block";
     tip.style.left=Math.min(clientX+14,innerWidth-300)+"px";tip.style.top=(clientY+14)+"px";
-    tip.innerHTML=tipHTML(i);
+    setHTMLIfChanged(tip,tipHTML(i));
     if(needIntel(i))socket.emit("mm_region_info",{room_id:ROOM_ID,player_id:MY_PID,region:i});
   }else{
     if(hovI!==-1){hovI=-1;schedule()}
@@ -1483,7 +1496,7 @@ function renderPanel(){
     h+='<div>行军进度 '+prog+'%（'+fmt(a.pos_km)+'/'+fmt(a.total_km)+' km，83km/s）</div>';
     const dest=to?to.n:null;
     if(dest&&a.pid===MY_PID)h+='<div class="dim">抵达后：无主地驻扎 / 敌方或他人驻军地开战</div>';
-    p.innerHTML=h;p.style.display="block";return;
+    setHTMLIfChanged(p,h);p.style.display="block";return;
   }
   if(SEL<0||!REG[SEL]){p.style.display="none";return}
   const rg=REG[SEL];
@@ -1507,7 +1520,7 @@ function renderPanel(){
     if(spec){h+='<div class="dim">你是观战者，不能选地</div>'}
     else if(myPick){h+='<div>✅ 已选此地'+(CONFLICTS.includes(SEL)?'（冲突！点击其他地块重选）':"")+'</div>'}
     else h+='<button onclick="confirmPick()">选为出生地</button>';
-    p.innerHTML=h;p.style.display="block";return;
+    setHTMLIfChanged(p,h);p.style.display="block";return;
   }
   // playing
   const opid=own?own[0]:null;
@@ -1586,7 +1599,7 @@ function renderPanel(){
   }else if(opid!==MY_PID){
     h+='<div class="dim">他人地块：从相邻己方驻军出兵进攻，胜利继承全部设施与人口</div>';
   }
-  p.innerHTML=h;p.style.display="block";
+  setHTMLIfChanged(p,h);p.style.display="block";
 }
 // ---------- 启动 ----------
 window.addEventListener("error",e=>{
