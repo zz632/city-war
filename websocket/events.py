@@ -131,19 +131,23 @@ def _register():
             ok2, res = game.try_start(active)
             if not ok2:
                 if 'conflicts' in res:
-                    names = game.picks_view()['names']
-                    msg = '、'.join(
-                        '与'.join(names.get(q, q) for q in pids)
-                        for pids in res['conflicts'].values())
-                    _emit('mm_conflict', {
-                        'conflicts': res['conflicts'],
-                        'picks': game.picks_view(),
-                        'message': '选地冲突：%s 选了同一块地，请重新选地' % msg,
-                    }, room=room_id)
+                    # 保密：只通知冲突者本人重新选地，其他人无感知
+                    sid_by_pid = {}
+                    for sid, pid2 in list(ws_player_map.items()):
+                        sid_by_pid.setdefault(pid2, sid)
+                    for cpid, pids in res['conflicts'].items():
+                        sid = sid_by_pid.get(cpid)
+                        if not sid:
+                            continue
+                        socketio.emit('mm_conflict', {
+                            'conflicts': [int(i) for i, qs in res['conflicts'].items() if cpid in qs],
+                            'picks': game.picks_view(cpid),
+                            'message': '你的出生地与他人冲突，请重新选地',
+                        }, room=sid)
                 else:
                     _emit('mm_conflict', {'message': res.get('error', '无法开始')}, room=room_id)
                 return
-            _emit('mm_picks', game.picks_view(), room=room_id)
+            _mm_push_picks(room, game)
             _emit('mm_phase', {'phase': 'playing'}, room=room_id)
             _mm_push_full(room.id, game, with_world=True)  # 开局带一次底图归属全量
             return
@@ -180,6 +184,19 @@ def _register():
         # 房主不能观战
         if player.is_host:
             return
+        # 地图模式：选地阶段可转观战（同步移出选地名单）
+        if room.room_type == 'map_mode':
+            from game.mapmode import map_manager
+            g = map_manager.get(room_id)
+            if g and g.phase == 'picking':
+                player.is_spectator = True
+                player.is_alive = False
+                g.remove_player(player_id)
+                _mm_push_picks(room, g)
+                _emit('lobby_update', {
+                    'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
+                }, room=room_id)
+                return
         # 游戏进行中不能从玩家变为观战者
         if room.game_state and room.game_state.phase != GamePhase.WAITING:
             return
@@ -200,6 +217,19 @@ def _register():
         player = room.players[player_id]
         if not player.is_spectator:
             return
+        # 地图模式：选地阶段可转回玩家
+        if room.room_type == 'map_mode':
+            from game.mapmode import map_manager
+            g = map_manager.get(room_id)
+            if g and g.phase == 'picking':
+                player.is_spectator = False
+                player.is_alive = True
+                g.add_player(player_id, player.name, getattr(player, 'theme_color', '') or '')
+                _mm_push_picks(room, g)
+                _emit('lobby_update', {
+                    'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
+                }, room=room_id)
+                return
         if room.game_state and room.game_state.phase != GamePhase.WAITING:
             return
         player.is_spectator = False
@@ -494,37 +524,76 @@ def _register():
         if game:
             game.set_color(player_id, color)
             if game.phase == 'picking':
-                _emit('mm_picks', game.picks_view(), room=room_id)
+                _mm_push_picks(room, game)
         _emit('lobby_update', {
             'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()}
         }, room=room_id)
 
     def _mm_full_state(room, game, player_id, with_world=True):
-        """mm_state 载荷（join 带 world 底图全量；兜底/操作回传不带，归属走 mm_delta 增量）"""
+        """mm_state 载荷（join 带 world 底图全量；兜底/操作回传不带，归属走 mm_delta 增量）
+        观战者传 None：全图视野（规则 S6）"""
+        rp = room.players.get(player_id)
+        viewer = None if (rp and rp.is_spectator) else player_id
         return {
             'room_id': room.id,
             'players': {pid: p.to_dict(is_spectator=True, is_self=True) for pid, p in room.players.items()},
             'host_id': room.host_id,
-            'world': game.world_snapshot(player_id) if with_world else None,
-            'my': game.my_state(player_id),
-            'picks': game.picks_view() if game.phase == 'picking' else None,
+            'world': game.world_snapshot(viewer) if with_world else None,
+            'my': game.my_state(viewer),
+            'picks': game.picks_view(viewer) if game.phase == 'picking' else None,
         }
 
     def _mm_push_full(room_id, game, with_world=False):
-        """给对局内每个在线玩家推各自状态（tick 线程定期调用 / 进入 playing 时调用）"""
+        """给对局内每个在线成员推各自状态（含观战者全图视野）"""
         room = room_manager.get_room(room_id)
         if not room:
             return
         sid_by_pid = {}
         for sid, pid in list(ws_player_map.items()):
             sid_by_pid.setdefault(pid, sid)
+        for pid, rp in room.players.items():
+            sid = sid_by_pid.get(pid)
+            if not sid:
+                continue
+            viewer = None if rp.is_spectator else pid
+            socketio.emit('mm_state', _mm_full_state(room, game, viewer if viewer is None else pid, with_world=with_world), room=sid)
+
+    def _mm_push_picks(room, game):
+        """选地保密推送：每个玩家只收到自己的选择视图（规则 2.1）"""
+        sid_by_pid = {}
+        for sid, pid in list(ws_player_map.items()):
+            sid_by_pid.setdefault(pid, sid)
         for pid in game.players:
             sid = sid_by_pid.get(pid)
             if sid:
-                socketio.emit('mm_state', _mm_full_state(room, game, pid, with_world=with_world), room=sid)
+                socketio.emit('mm_picks', game.picks_view(pid), room=sid)
+
+    def _mm_push_delta(room_id, game, dirty):
+        """per-player 视野过滤增量广播：观战者全图视野，参战者按迷雾过滤（规则 8/13）"""
+        room = room_manager.get_room(room_id)
+        if not room:
+            return
+        sid_by_pid = {}
+        for sid, pid in list(ws_player_map.items()):
+            sid_by_pid.setdefault(pid, sid)
+        for pid, rp in room.players.items():
+            sid = sid_by_pid.get(pid)
+            if not sid:
+                continue
+            viewer = None if rp.is_spectator else pid
+            try:
+                delta = game.tick_delta(dirty, viewer)
+            except Exception:
+                import traceback
+                print('[MM_DELTA] %s 视图异常:' % pid)
+                traceback.print_exc()
+                continue
+            if delta:
+                socketio.emit('mm_delta', delta, room=sid)
 
     from game.mapmode import map_manager as _mmgr
     _mmgr.full_state_cb = _mm_push_full
+    _mmgr.delta_cb = _mm_push_delta
 
     @socketio.on('mm_join')
     def on_mm_join(data):
@@ -539,7 +608,7 @@ def _register():
         if rp and not rp.is_spectator and player_id not in game.players \
                 and game.phase == 'picking':
             game.add_player(player_id, rp.name, getattr(rp, 'theme_color', '') or '')
-            _emit('mm_picks', game.picks_view(), room=room.id)
+            _mm_push_picks(room, game)
         _emit('mm_state', _mm_full_state(room, game, player_id), room=request.sid)
 
     @socketio.on('mm_pick')
@@ -553,21 +622,45 @@ def _register():
             _emit('mm_error', {'message': msg or '选地失败'}, room=request.sid)
             return
         _emit('mm_pick_ok', {'region': game.players[player_id].picked}, room=request.sid)
-        _emit('mm_picks', game.picks_view(), room=room.id)
+        _mm_push_picks(room, game)
 
-    @socketio.on('mm_region_info')
-    def on_mm_region_info(data):
-        """地块悬停情报查询"""
+    @socketio.on('mm_vote_pause')
+    def on_mm_vote_pause(data):
         room, game, player_id = _mm_room(data)
         if not game:
             return
-        info = game.region_info(data.get('region'), player_id)
+        ok, res = game.vote_pause(player_id)
+        if not ok:
+            _emit('mm_error', {'message': res}, room=request.sid)
+            return
+        _emit('mm_pause', res, room=str(data.get('room_id', '')).strip())
+
+    @socketio.on('mm_vote_resume')
+    def on_mm_vote_resume(data):
+        room, game, player_id = _mm_room(data)
+        if not game:
+            return
+        ok, res = game.vote_resume(player_id)
+        if not ok:
+            _emit('mm_error', {'message': res}, room=request.sid)
+            return
+        _emit('mm_pause', res, room=str(data.get('room_id', '')).strip())
+
+    @socketio.on('mm_region_info')
+    def on_mm_region_info(data):
+        """地块悬停情报查询（观战者传 None：全图视野）"""
+        room, game, player_id = _mm_room(data)
+        if not game:
+            return
+        rp = room.players.get(player_id)
+        viewer = None if (rp and rp.is_spectator) else player_id
+        info = game.region_info(data.get('region'), viewer)
         if info is not None:
             _emit('mm_region_info', info, room=request.sid)
 
     @socketio.on('mm_action')
     def on_mm_action(data):
-        """统一操作入口: colonize / recruit / build / demolish / send"""
+        """统一操作入口: colonize / recruit / build / demolish / send / disband"""
         room, game, player_id = _mm_room(data)
         if not game:
             return
@@ -579,6 +672,8 @@ def _register():
             'build': lambda: game.build(player_id, args.get('region'), args.get('type', '')),
             'demolish': lambda: game.demolish(player_id, args.get('region'), args.get('type', '')),
             'send': lambda: game.send_troops(player_id, args.get('from'), args.get('to'), args.get('count', 0)),
+            'disband': lambda: game.disband(player_id, args.get('region'), args.get('count', 0)),
+            'set_mil': lambda: game.set_mil(player_id, args.get('region'), bool(args.get('public'))),
         }.get(act)
         if not fn:
             _emit('mm_error', {'message': '未知操作'}, room=request.sid)
@@ -602,6 +697,199 @@ def _register():
                 print('[MM_ACTION] %s 回传异常:' % act)
                 traceback.print_exc()
                 _emit('mm_error', {'message': '服务器内部错误'}, room=request.sid)
+
+    # ---- 外交聊天（规则 12：公开频道外新增私聊/群聊，MongoDB 持久化） ----
+
+    def _dip_sid(pid):
+        for sid, p2 in list(ws_player_map.items()):
+            if p2 == pid:
+                return sid
+        return None
+
+    def _dip_push_list(room_id, pid):
+        """推送某人的会话列表（含未读数）"""
+        from game.diplomacy import diplomacy
+        sid = _dip_sid(pid)
+        if sid:
+            socketio.emit('conv_list', {'convs': diplomacy.list_for(pid, room_id)}, room=sid)
+
+    def _dip_push_msg(room_id, cid, entry):
+        """把新消息定向推给会话全部在线成员"""
+        from game.diplomacy import diplomacy
+        conv = diplomacy.convs.get(cid)
+        if not conv:
+            return
+        for m in conv['members']:
+            sid = _dip_sid(m)
+            if sid:
+                socketio.emit('conv_msg', {'cid': cid, 'msg': entry}, room=sid)
+
+    def _dip_push_conv(room_id, cid, exclude=None):
+        """推送会话元数据变更（建群/入群/退群/踢人）给成员"""
+        from game.diplomacy import diplomacy
+        conv = diplomacy.convs.get(cid)
+        if not conv:
+            return
+        for m in conv['members']:
+            if m == exclude:
+                continue
+            sid = _dip_sid(m)
+            if sid:
+                socketio.emit('conv_update', {'conv': conv}, room=sid)
+
+    @socketio.on('conv_list_req')
+    def on_conv_list_req(data):
+        from game.diplomacy import diplomacy
+        room_id = str(data.get('room_id', '')).strip()
+        player_id = data.get('player_id', '')
+        diplomacy.load_room(room_id)  # 重启后懒加载本房间历史会话
+        _dip_push_list(room_id, player_id)
+
+    @socketio.on('dm_open')
+    def on_dm_open(data):
+        """打开/创建与某玩家的私聊"""
+        from game.diplomacy import diplomacy
+        room_id = str(data.get('room_id', '')).strip()
+        player_id = data.get('player_id', '')
+        to_pid = data.get('to_pid', '')
+        conv, err = diplomacy.open_dm(room_id, player_id, to_pid)
+        if err:
+            _emit('mm_error', {'message': err}, room=request.sid)
+            return
+        _dip_push_list(room_id, player_id)
+        _dip_push_list(room_id, to_pid)
+        _emit('conv_opened', {'cid': conv['id']}, room=request.sid)
+
+    @socketio.on('group_create')
+    def on_group_create(data):
+        """建群：自选成员，发起者为群主"""
+        from game.diplomacy import diplomacy
+        room_id = str(data.get('room_id', '')).strip()
+        player_id = data.get('player_id', '')
+        name = str(data.get('name', '') or '群聊')[:20]
+        members = data.get('members', []) or []
+        conv, err = diplomacy.create_group(room_id, player_id, name, members)
+        if err:
+            _emit('mm_error', {'message': err}, room=request.sid)
+            return
+        for m in conv['members']:
+            _dip_push_list(room_id, m)
+        _dip_push_conv(room_id, conv['id'])
+        _emit('conv_opened', {'cid': conv['id']}, room=request.sid)
+
+    @socketio.on('group_join_req')
+    def on_group_join_req(data):
+        """入群申请：通知全部现有成员审批"""
+        from game.diplomacy import diplomacy
+        room_id = str(data.get('room_id', '')).strip()
+        player_id = data.get('player_id', '')
+        cid = data.get('cid', '')
+        room = room_manager.get_room(room_id)
+        uname = room.players[player_id].name if room and player_id in room.players else '玩家'
+        conv, err = diplomacy.join_request(cid, player_id, uname)
+        if err:
+            _emit('mm_error', {'message': err}, room=request.sid)
+            return
+        _dip_push_conv(room_id, cid)
+        for m in conv['members']:
+            sid = _dip_sid(m)
+            if sid:
+                socketio.emit('group_join_req', {'cid': cid, 'pid': str(player_id),
+                                                 'name': uname}, room=sid)
+        _emit('toast_msg', {'message': '入群申请已提交，等待全员同意'}, room=request.sid)
+
+    @socketio.on('group_join_vote')
+    def on_group_join_vote(data):
+        """成员审批入群申请：全员同意入群，任一拒绝则拒绝"""
+        from game.diplomacy import diplomacy
+        room_id = str(data.get('room_id', '')).strip()
+        player_id = data.get('player_id', '')
+        cid = data.get('cid', '')
+        approve = bool(data.get('approve'))
+        conv, applicant, result, _extra = diplomacy.join_vote(cid, player_id, approve)
+        if not conv:
+            _emit('mm_error', {'message': result}, room=request.sid)
+            return
+        _dip_push_list(room_id, applicant)
+        _dip_push_conv(room_id, cid)
+        for m in conv['members'] + [applicant]:
+            sid = _dip_sid(m)
+            if not sid:
+                continue
+            if result == 'joined':
+                socketio.emit('toast_msg', {'message': '入群申请通过，新成员已加入'}, room=sid)
+            elif result == 'rejected':
+                socketio.emit('toast_msg', {'message': '入群申请被拒绝'}, room=sid)
+            elif result == 'voted':
+                socketio.emit('group_join_req', {'cid': cid, 'pid': applicant}, room=sid)
+        _dip_push_list(room_id, player_id)
+
+    @socketio.on('group_leave')
+    def on_group_leave(data):
+        from game.diplomacy import diplomacy
+        room_id = str(data.get('room_id', '')).strip()
+        player_id = data.get('player_id', '')
+        cid = data.get('cid', '')
+        conv, err = diplomacy.leave(cid, player_id)
+        _dip_push_list(room_id, player_id)
+        if conv:
+            _dip_push_conv(room_id, cid, exclude=str(player_id))
+            for m in conv['members']:
+                sid = _dip_sid(m)
+                if sid:
+                    socketio.emit('toast_msg', {'message': '有成员退出了群聊'}, room=sid)
+        _emit('conv_closed', {'cid': cid}, room=request.sid)
+
+    @socketio.on('group_kick')
+    def on_group_kick(data):
+        """群主踢人"""
+        from game.diplomacy import diplomacy
+        room_id = str(data.get('room_id', '')).strip()
+        player_id = data.get('player_id', '')
+        cid = data.get('cid', '')
+        target = data.get('target', '')
+        conv, err = diplomacy.kick(cid, player_id, target)
+        if err:
+            _emit('mm_error', {'message': err}, room=request.sid)
+            return
+        _dip_push_list(room_id, target)
+        _dip_push_conv(room_id, cid)
+        tsid = _dip_sid(target)
+        if tsid:
+            socketio.emit('toast_msg', {'message': '你已被群主移出群聊'}, room=tsid)
+            socketio.emit('conv_closed', {'cid': cid}, room=tsid)
+
+    @socketio.on('conv_msg')
+    def on_conv_msg(data):
+        """会话消息（私聊/群聊）"""
+        from game.diplomacy import diplomacy
+        room_id = str(data.get('room_id', '')).strip()
+        player_id = data.get('player_id', '')
+        cid = data.get('cid', '')
+        msg = str(data.get('msg', '')).strip()
+        if not msg:
+            return
+        room = room_manager.get_room(room_id)
+        uname = room.players[player_id].name if room and player_id in room.players else '玩家'
+        res, err = diplomacy.send_msg(cid, player_id, uname, msg)
+        if err:
+            _emit('mm_error', {'message': err}, room=request.sid)
+            return
+        _dip_push_msg(room_id, cid, res['msg'])
+
+    @socketio.on('conv_read')
+    def on_conv_read(data):
+        from game.diplomacy import diplomacy
+        diplomacy.read(data.get('cid', ''), data.get('player_id', ''))
+
+    @socketio.on('conv_hist')
+    def on_conv_hist(data):
+        """拉取会话历史消息（断线重连后查看未读）"""
+        from game.diplomacy import diplomacy
+        cid = data.get('cid', '')
+        diplomacy.read(cid, data.get('player_id', ''))
+        _emit('conv_hist', {'cid': cid, 'msgs': diplomacy.history(cid)[-100:],
+                            'conv': diplomacy.convs.get(cid)}, room=request.sid)
 
     # ---- 游戏 ----
 

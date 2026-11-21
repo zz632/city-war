@@ -200,6 +200,23 @@ def _decrypt_api_key(encrypted):
 
 # 初始化 MongoDB 并加载用户数据
 _init_mongodb()
+
+# 地图模式：MongoDB 快照持久化 + 重启恢复未结束对局（S7）
+try:
+    from game.mapmode import map_manager as _mmgr
+    _mmgr.set_mongo(_mongo_db, room_manager.get_room)
+    if _mongo_db is not None:
+        from game.mapmode.persistence import restore_all
+        restore_all(_mongo_db, _mmgr, room_manager)
+except Exception as _mm_err:
+    print('[MapMode] 快照模块初始化失败（不影响主流程）: %r' % _mm_err)
+
+# 外交聊天（S8）：MongoDB 持久化绑定
+try:
+    from game.diplomacy import diplomacy as _dip
+    _dip.bind_mongo(_mongo_db)
+except Exception as _dip_err:
+    print('[DIPLO] 外交模块初始化失败（不影响主流程）: %r' % _dip_err)
 _load_users()
 
 # 恢复持久化的登录会话（服务重启后自动登录；跳过游客与已删除用户）

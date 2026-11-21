@@ -78,11 +78,37 @@ background:rgba(250,249,244,.96);border:1px solid #b5b0a4;border-radius:4px;box-
 #chatHead{padding:6px 12px;font-size:13px;color:#3e4a3a;border-bottom:1px solid #d5d1c4;cursor:pointer;user-select:none}
 #chatBody{display:none;flex-direction:column}
 #chatBody.open{display:flex}
+#chatTabs{display:flex;gap:4px;padding:4px 8px 0}
+.ctab{font-size:12px;padding:3px 10px;border-radius:3px 3px 0 0;cursor:pointer;color:#6b675c;border:1px solid transparent}
+.ctab.sel{background:#e7e2d4;color:#26241f;font-weight:bold}
+.ctab b{color:#8c3b2e}
 #msgs{height:160px;overflow-y:auto;padding:6px 10px;font-size:13px;color:#26241f;line-height:1.5}
 #msgs .who{color:#3e4a3a;font-weight:bold}
+#convArea{height:160px;overflow-y:auto;padding:6px 10px;font-size:13px}
+.convItem{display:flex;justify-content:space-between;align-items:center;padding:4px 6px;border-radius:3px;cursor:pointer}
+.convItem:hover{background:#e7e2d4}
+.convItem .badge{background:#8c3b2e;color:#fff;border-radius:8px;padding:0 6px;font-size:11px}
+.convSec{color:#9d978a;font-size:11px;margin:6px 0 2px}
+.pbtn{display:inline-block;background:#e7e2d4;border:none;border-radius:3px;padding:2px 8px;margin:2px 4px 2px 0;font-size:12px;cursor:pointer;font-family:inherit}
 #chatRow{display:flex;border-top:1px solid #d5d1c4}
 #chatIn{flex:1;border:none;padding:8px 10px;font-family:inherit;font-size:13px;background:transparent;outline:none}
 #chatSend{border:none;background:#3e4a3a;color:#f4f1e8;padding:0 14px;cursor:pointer;font-family:inherit}
+/* ---- 外交会话弹窗 ---- */
+#dmModal{position:fixed;inset:0;z-index:40;display:none;background:rgba(20,18,15,.55)}
+#dmModal .card{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+background:#faf9f4;border-radius:8px;padding:14px 16px;box-shadow:0 8px 40px rgba(0,0,0,.35);width:min(420px,92vw)}
+#dmHead{display:flex;justify-content:space-between;align-items:center;font-weight:bold;font-size:15px;color:#26241f}
+#dmMsgs{height:220px;overflow-y:auto;padding:8px 4px;font-size:13px;line-height:1.5;color:#26241f}
+#dmMsgs .who{font-weight:bold;color:#3e4a3a}
+#dmReqBanner{background:#efe4c8;border-radius:4px;padding:6px 8px;margin:6px 0;font-size:13px;display:none}
+#dmRow{display:flex;border-top:1px solid #d5d1c4;margin-top:6px;padding-top:6px}
+#dmIn{flex:1;border:1px solid #c9c4b6;border-radius:3px;padding:6px 8px;font-family:inherit;font-size:13px;outline:none}
+/* ---- 建群弹窗 ---- */
+#grpModal{position:fixed;inset:0;z-index:41;display:none;background:rgba(20,18,15,.55)}
+#grpModal .card{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+background:#faf9f4;border-radius:8px;padding:16px 20px;box-shadow:0 8px 40px rgba(0,0,0,.35);width:min(360px,92vw)}
+#grpModal .mrow{display:flex;align-items:center;gap:6px;margin:3px 0;font-size:13px}
+#grpName{width:100%;border:1px solid #c9c4b6;border-radius:3px;padding:6px 8px;font-family:inherit;font-size:13px;outline:none}
 /* ---- 提示气泡 ---- */
 #toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%);display:none;z-index:30;
 background:rgba(140,59,46,.94);color:#fff;padding:8px 18px;border-radius:3px;font-size:14px;max-width:86vw;text-align:center}
@@ -119,7 +145,12 @@ background:#faf9f4;border-radius:8px;padding:22px 26px;box-shadow:0 8px 40px rgb
 <div id="chatBox">
   <div id="chatHead">💬 外交频道（点此展开/收起）</div>
   <div id="chatBody">
+    <div id="chatTabs">
+      <span class="ctab sel" id="tabPub" onclick="chatTab('pub')">公开频道</span>
+      <span class="ctab" id="tabDip" onclick="chatTab('dip')">私聊·群聊 <b id="dipBadge"></b></span>
+    </div>
     <div id="msgs"></div>
+    <div id="convArea" style="display:none"></div>
     <div id="chatRow">
       <input id="chatIn" placeholder="对全场发言…" maxlength="200">
       <button id="chatSend">发送</button>
@@ -133,6 +164,29 @@ background:#faf9f4;border-radius:8px;padding:22px 26px;box-shadow:0 8px 40px rgb
     <div class="dim">一个颜色只能一人使用 · 先到先得 · 蓝色与白色留给海洋和大地</div>
     <div class="grid" id="colorGrid"></div>
     <div style="margin-top:14px"><button class="ghost" style="font-family:inherit;padding:6px 16px;border:none;border-radius:3px;background:#6b675c;color:#f4f1e8;cursor:pointer" onclick="closeColorModal()">稍后再说</button></div>
+  </div>
+</div>
+<!-- 外交会话弹窗 -->
+<div id="dmModal">
+  <div class="card">
+    <div id="dmHead"><span id="dmTitle">会话</span><button class="ghost" onclick="closeDm()">✕</button></div>
+    <div id="dmReqBanner"></div>
+    <div id="dmMsgs"></div>
+    <div id="dmManage"></div>
+    <div id="dmRow"><input id="dmIn" placeholder="输入消息…" maxlength="200"><button id="chatSend" onclick="sendDm()">发送</button></div>
+  </div>
+</div>
+<!-- 建群弹窗 -->
+<div id="grpModal">
+  <div class="card">
+    <h3 style="margin:0 0 8px">发起群聊</h3>
+    <input id="grpName" placeholder="群名称" maxlength="20">
+    <div style="margin:8px 0 4px;font-size:12px;color:#6b675c">选择成员（自己自动入群并成为群主）：</div>
+    <div id="grpMembers"></div>
+    <div style="margin-top:10px;display:flex;gap:8px">
+      <button onclick="confirmGroup()">创建群聊</button>
+      <button class="ghost" onclick="closeGroup()">取消</button>
+    </div>
   </div>
 </div>
 <script src="/static/js/socket.io.min.js"></script>
@@ -155,11 +209,18 @@ const DPR=Math.min(2,window.devicePixelRatio||1);
 const yieldUI=()=>new Promise(r=>setTimeout(r,0));
 const IS_TOUCH=matchMedia("(pointer:coarse)").matches||"ontouchstart" in window;
 
-// 主题色池（与服务端 engine.THEME_COLORS 一致）
-const THEME_COLORS=["#d32f2f","#f57c00","#fbc02d","#388e3c","#00896b","#7b1fa2",
-                    "#c2185b","#e91e63","#795548","#455a64","#212121","#827717"];
-const COLOR_NAMES={["#d32f2f"]:"红","#f57c00":"橙","#fbc02d":"黄","#388e3c":"绿","#00896b":"青绿","#7b1fa2":"紫",
-                   ["#c2185b"]:"品红","#e91e63":"玫红","#795548":"棕","#455a64":"深灰","#212121":"黑","#827717":"橄榄"};
+// 主题色池（与服务端 engine.THEME_COLORS 一致，32 色）
+const THEME_COLORS=["#d32f2f","#b71c1c","#e64a19","#d84315","#f57c00","#ef6c00","#ff6f00","#f9a825",
+                    "#fbc02d","#cddc39","#afb42b","#9e9d24","#827717","#558b2f","#388e3c","#2e7d32",
+                    "#1b5e20","#00896b","#00695c","#7b1fa2","#9c27b0","#4a148c","#c2185b","#ad1457",
+                    "#e91e63","#d81b60","#880e4f","#795548","#5d4037","#4e342e","#455a64","#212121"];
+const COLOR_NAMES={"#d32f2f":"红","#b71c1c":"深红","#e64a19":"橙红","#d84315":"赭红","#f57c00":"橙",
+                   "#ef6c00":"亮橙","#ff6f00":"琥珀","#f9a825":"金","#fbc02d":"黄","#cddc39":"青柠",
+                   "#afb42b":"黄绿","#9e9d24":"苔绿","#827717":"橄榄","#558b2f":"叶绿","#388e3c":"绿",
+                   "#2e7d32":"松绿","#1b5e20":"深绿","#00896b":"青绿","#00695c":"深青","#7b1fa2":"紫",
+                   "#9c27b0":"藕紫","#4a148c":"深紫","#c2185b":"品红","#ad1457":"绯红","#e91e63":"玫红",
+                   "#d81b60":"桃红","#880e4f":"深玫","#795548":"棕","#5d4037":"深棕","#4e342e":"咖啡",
+                   "#455a64":"深灰","#212121":"黑"};
 
 // ---------- URL 参数 / socket ----------
 const ROOM_ID=(location.pathname.split("/").pop()||"").trim();
@@ -202,6 +263,7 @@ async function loadRegions(){
 let PHASE="loading", WORLD={}, PLAYERS={}, COLORS={}, MY=null, ARMIES=[], BATTLES={};
 let SEL=-1, SEL_ARMY=0, MOVE_MODE=null, MY_PICK=-1;
 let PICKS={}, CONFLICTS=[], HOST_ID="";
+let PAUSED=false;   // 全员投票暂停（规则 10）
 let ISLAND_OPEN=true;
 let INTEL={};   // i -> {info, ts}（他人地块模糊情报缓存）
 let SUMMARY=null; // 终局结算 {winner, elim:[{pid,name,land}], alive:[{pid,name,land}]}
@@ -224,6 +286,7 @@ socket.on("mm_state",d=>{
     MY=d.my;
     COLORS=d.my.colors||COLORS;
     PHASE=d.my.phase;
+    PAUSED=!!d.my.paused;
     if(d.my.me)MY_PICK=d.my.me.picked;
   }
   if(d.picks)applyPicks(d.picks);
@@ -247,6 +310,8 @@ socket.on("mm_delta",d=>{
   if(d.armies)ARMIES=d.armies;
   if(d.battles)BATTLES=d.battles;
   if(d.phase)PHASE=d.phase;
+  if(d.paused!==undefined)PAUSED=!!d.paused;
+  if(d.paused)showBanner("⏸ 游戏已暂停（全员投票）");
   if(d.phase==="finished")showBanner(d.winner?("游戏结束 · 胜者："+((PLAYERS[d.winner]||{}).name||"?")):"游戏结束");
   renderIsland();refreshTip();renderPanel();schedule();
 });
@@ -291,6 +356,13 @@ socket.on("mm_region_info",d=>{
   refreshTip();
 });
 socket.on("mm_error",d=>toast(d.message||"操作失败"));
+socket.on("mm_pause",d=>{
+  PAUSED=!!d.paused;
+  if(PAUSED){showBanner("⏸ 游戏已暂停（全员投票）")}
+  else{hideBanner();toast(d.msg||"游戏继续")}
+  if(!PAUSED&&d.msg)toast(d.msg);
+  renderIsland();schedule();
+});
 socket.on("error_msg",d=>toast(d.message||"错误"));
 socket.on("chat_message",d=>{
   const m=document.getElementById("msgs");
@@ -298,7 +370,10 @@ socket.on("chat_message",d=>{
   div.innerHTML='<span class="who">'+esc(d.player_name)+':</span> '+esc(d.message);
   m.appendChild(div);m.scrollTop=m.scrollHeight;
 });
-socket.on("connect",()=>{socket.emit("mm_join",{room_id:ROOM_ID,player_id:MY_PID})});
+socket.on("connect",()=>{
+  socket.emit("mm_join",{room_id:ROOM_ID,player_id:MY_PID});
+  socket.emit("conv_list_req",{room_id:ROOM_ID,player_id:MY_PID});  // 外交会话列表（含历史未读）
+});
 
 // ---------- 灵动岛 ----------
 const islandEl=document.getElementById("island");
@@ -329,9 +404,9 @@ function renderIsland(){
   const st=myStats();
   // 收起态胶囊（收起时信息极简，保证不超出 180px 胶囊宽度）
   if(PHASE==="picking"){
-    const done=Object.keys(PICKS).length;
+    const total=Object.keys(PLAYERS).filter(pid=>!PLAYERS[pid].is_spectator).length;
     pillText.textContent=CONFLICTS.length?"冲突重选":"选地中";
-    pillStat.textContent=ISLAND_OPEN?"已选 "+done+" 人":"";
+    pillStat.textContent=ISLAND_OPEN?total+" 名玩家 · 选地保密":"";
   }else if(PHASE==="playing"||PHASE==="finished"){
     pillText.textContent="💰"+fmt(st.money);
     pillStat.textContent=ISLAND_OPEN?("👥"+fmt(st.pop)+" ⚔"+fmt(st.army)+" 🗺"+st.land):"";
@@ -348,11 +423,14 @@ function renderIsland(){
       const p=PLAYERS[pid];
       if(p.is_spectator)continue;
       const col=pColor(pid)||"#777";
-      const picked=PICKS[pid]!==undefined&&PICKS[pid]!==null;
-      const rn=picked&&REG[PICKS[pid]]?REG[PICKS[pid]].n:"未选地";
+      let tag;
+      if(pid===MY_PID){
+        tag=MY_PICK>=0&&REG[MY_PICK]?REG[MY_PICK].n:"未选地";
+        if(CONFLICTS.includes(MY_PICK))tag+=" ⚠";
+      }else tag="🔒 保密";
       h+='<div class="row"><span class="dot" style="background:'+col+'"></span>'+esc(p.name)
         +(pid===MY_PID?"（你）":"")
-        +'<span class="pid-tag">'+(picked?esc(rn):"…")+(CONFLICTS.includes(PICKS[pid])?" ⚠":"")+'</span></div>';
+        +'<span class="pid-tag">'+esc(tag)+'</span></div>';
     }
     if(isHost()){
       h+='<div style="margin-top:10px"><button onclick="hostStart()">▶ 开始游戏</button>'
@@ -365,6 +443,9 @@ function renderIsland(){
     h+='<div class="statgrid">'
       +'<span>资金 <b>'+fmt(st.money)+'</b></span><span>人口 <b>'+fmt(st.pop)+'</b></span>'
       +'<span>军队 <b>'+fmt(st.army)+'</b></span><span>地块 <b>'+st.land+'</b></span></div>';
+    if(PHASE==="playing"){
+      h+='<div style="margin-top:6px"><button class="ghost" onclick="votePause()">'+(PAUSED?"▶ 投票恢复游戏":"⏸ 投票暂停")+'</button></div>';
+    }
     h+='<h4>玩家</h4>';
     for(const pid in PLAYERS){
       const p=PLAYERS[pid];
@@ -419,6 +500,9 @@ function toggleSpectate(){
   const p=PLAYERS[MY_PID];
   socket.emit(p&&p.is_spectator?"unspectate_join":"spectate_join",{room_id:ROOM_ID,player_id:MY_PID});
 }
+function votePause(){
+  socket.emit(PAUSED?"mm_vote_resume":"mm_vote_pause",{room_id:ROOM_ID,player_id:MY_PID});
+}
 function quitGame(){location.href="/"}
 function hostStart(){
   socket.emit("start_game",{room_id:ROOM_ID,player_id:MY_PID});
@@ -460,15 +544,12 @@ function tipHTML(i){
   let h="<b>"+esc(rg.n)+"</b><br><span class='cd'>"+esc(rg.c)+" · ≈"+fmt(rg.a)+" km²</span>";
   if(PHASE==="picking"){
     h+="<br><span class='cd'>初始人口 "+fmt(rg.a*2)+" · 预计启动资金 "+fmt(startMoney(rg.a))+" 元</span>";
-    const ps=Object.keys(PICKS).filter(pid=>PICKS[pid]===i);
-    if(ps.length){
-      for(const pid of ps){
-        const col=pColor(pid)||"#777";
-        h+="<div class='pickrow'><span class='dot' style='background:"+col+"'></span>"+esc((PLAYERS[pid]||{}).name||"?")+"</div>";
-      }
-      if(ps.length>1)h+="<div style='color:#ff9d8f'>⚠ 冲突：多人选择</div>";
+    if(MY_PICK===i){
+      h+="<div class='pickrow'><span class='dot' style='background:"+(myColor()||"#777")+"'></span>你已选此地";
+      if(CONFLICTS.includes(i))h+=" <span style='color:#ff9d8f'>⚠ 冲突，请重选</span>";
+      h+="</div>";
     }else{
-      h+="<br><span class='cd'>未被选择 · 点击选为出生地</span>";
+      h+="<br><span class='cd'>点击选为出生地（选地保密，互相不可见）</span>";
     }
     return h;
   }
@@ -518,7 +599,7 @@ function refreshTip(){
   }
 }
 
-// ---------- 聊天 ----------
+// ---------- 聊天（公开频道 + 私聊/群聊外交，规则 12） ----------
 document.getElementById("chatHead").addEventListener("click",()=>{
   document.getElementById("chatBody").classList.toggle("open");
 });
@@ -531,6 +612,178 @@ function sendChat(){
 }
 document.getElementById("chatSend").addEventListener("click",sendChat);
 document.getElementById("chatIn").addEventListener("keydown",e=>{if(e.key==="Enter")sendChat()});
+// —— 私聊/群聊 ——
+let CONVS=[],DIP_CUR=null,DIP_HIST={},DIP_TAB="pub";
+function chatTab(t){
+  DIP_TAB=t;
+  document.getElementById("tabPub").classList.toggle("sel",t==="pub");
+  document.getElementById("tabDip").classList.toggle("sel",t==="dip");
+  document.getElementById("msgs").style.display=t==="pub"?"block":"none";
+  document.getElementById("convArea").style.display=t==="dip"?"block":"none";
+  if(t==="dip")socket.emit("conv_list_req",{room_id:ROOM_ID,player_id:MY_PID});
+  renderConvArea();
+}
+function dipUnread(){return CONVS.reduce((n,c)=>n+(c.unread||0),0)}
+function convName(c){
+  if(c.type==="group")return c.name||"群聊";
+  const other=(c.members||[]).find(m=>m!==String(MY_PID));
+  return (PLAYERS[other]||{}).name||other||"?";
+}
+function renderConvArea(){
+  const el=document.getElementById("convArea");
+  const badge=document.getElementById("dipBadge");
+  const n=dipUnread();
+  badge.textContent=n?("🔔"+n):"";
+  let h="";
+  if(CONVS.length){
+    h+='<div class="convSec">会话</div>';
+    for(const c of CONVS){
+      h+='<div class="convItem" onclick="openConv(\''+c.id+'\')"><span>'+(c.type==="group"?"👥 ":"")+esc(convName(c))+'</span>'
+        +(c.unread?'<span class="badge">'+c.unread+'</span>':"")+'</div>';
+    }
+  }else h+='<div class="convSec">暂无私聊/群聊</div>';
+  h+='<div class="convSec">发起私聊</div><div>';
+  for(const pid in PLAYERS){
+    if(pid===String(MY_PID)||PLAYERS[pid].is_spectator)continue;
+    h+='<button class="pbtn" onclick="newDm(\''+pid+'\')">'+esc(PLAYERS[pid].name)+'</button>';
+  }
+  h+='</div><div style="margin-top:8px"><button class="pbtn" onclick="openGroup()">👥 发起群聊</button></div>';
+  setHTMLIfChanged(el,h);
+}
+function newDm(pid){
+  socket.emit("dm_open",{room_id:ROOM_ID,player_id:MY_PID,to_pid:pid});
+}
+socket.on("conv_opened",d=>openConv(d.cid));
+socket.on("conv_list",d=>{
+  CONVS=d.convs||[];
+  renderConvArea();
+});
+socket.on("conv_update",d=>{
+  const c=d.conv;
+  if(!c)return;
+  const idx=CONVS.findIndex(x=>x.id===c.id);
+  const cur=CONVS[idx];
+  const merged=Object.assign({},cur||{},c);
+  if(cur)merged.unread=cur.unread;
+  if(idx>=0)CONVS[idx]=merged;else CONVS.push(merged);
+  renderConvArea();
+  if(DIP_CUR===c.id)renderDm();
+});
+socket.on("conv_msg",d=>{
+  const lst=DIP_HIST[d.cid]=DIP_HIST[d.cid]||[];
+  lst.push(d.msg);
+  const c=CONVS.find(x=>x.id===d.cid);
+  if(DIP_CUR===d.cid){renderDm();socket.emit("conv_read",{cid:d.cid,player_id:MY_PID})}
+  else if(c){c.unread=(c.unread||0)+1;renderConvArea()}
+});
+socket.on("conv_hist",d=>{
+  DIP_HIST[d.cid]=d.msgs||[];
+  if(d.conv)upsertConv(d.conv);
+  if(DIP_CUR===d.cid)renderDm();
+});
+socket.on("conv_closed",d=>{
+  CONVS=CONVS.filter(c=>c.id!==d.cid);
+  delete DIP_HIST[d.cid];
+  if(DIP_CUR===d.cid){closeDm()}
+  renderConvArea();
+});
+socket.on("group_join_req",d=>toast((d.name||"有玩家")+"申请加入群聊，请在会话中审批"));
+socket.on("toast_msg",d=>toast(d.message||""));
+function upsertConv(c){
+  const idx=CONVS.findIndex(x=>x.id===c.id);
+  if(idx>=0)CONVS[idx]=Object.assign({},CONVS[idx],c);
+  else CONVS.push(c);
+}
+function openConv(cid){
+  DIP_CUR=cid;
+  document.getElementById("dmModal").style.display="block";
+  socket.emit("conv_hist",{cid,player_id:MY_PID});
+  socket.emit("conv_read",{cid,player_id:MY_PID});
+  const c=CONVS.find(x=>x.id===cid);
+  if(c){c.unread=0}
+  renderDm();
+  renderConvArea();
+}
+function closeDm(){DIP_CUR=null;document.getElementById("dmModal").style.display="none"}
+function sendDm(){
+  const inp=document.getElementById("dmIn");
+  const v=inp.value.trim();
+  if(!v||!DIP_CUR)return;
+  socket.emit("conv_msg",{room_id:ROOM_ID,player_id:MY_PID,cid:DIP_CUR,msg:v});
+  inp.value="";
+}
+function renderDm(){
+  const c=CONVS.find(x=>x.id===DIP_CUR);
+  const head=document.getElementById("dmHead");
+  const msgs=document.getElementById("dmMsgs");
+  const ban=document.getElementById("dmReqBanner");
+  const mg=document.getElementById("dmManage");
+  if(!c){msgs.innerHTML="";ban.style.display="none";mg.innerHTML="";return}
+  document.getElementById("dmTitle").textContent=(c.type==="group"?"👥 ":"")+"与 "+convName(c)+" 的会话";
+  let h="";
+  for(const m of (DIP_HIST[DIP_CUR]||[])){
+    h+='<div><span class="who" style="color:'+(pColor(m.pid)||"#3e4a3a")+'">'+esc(m.name)+':</span> '+esc(m.msg)+'</div>';
+  }
+  setHTMLIfChanged(msgs,h);msgs.scrollTop=msgs.scrollHeight;
+  // 入群申请审批（现有成员可见）
+  const reqs=c.join_req||{};
+  const mine=String(MY_PID);
+  let bh="";
+  for(const pid in reqs){
+    const r=reqs[pid];
+    if(r.approved.includes(mine))continue;
+    bh+='<div>🙋 '+esc(r.name||pid)+' 申请入群 '
+      +'<button onclick="voteJoin(\''+c.id+'\',\''+pid+'\',true)">同意</button>'
+      +'<button class="ghost" onclick="voteJoin(\''+c.id+'\',\''+pid+'\',false)">拒绝</button></div>';
+  }
+  if(c.type==="group"&&bh){ban.innerHTML=bh;ban.style.display="block"}
+  else ban.style.display="none";
+  // 群管理
+  let mh="";
+  if(c.type==="group"){
+    const isOwner=c.owner===mine;
+    if(!c.members.includes(mine)){mh+='<div style="margin:6px 0"><button onclick="reqJoin(\''+c.id+'\')">🙋 申请入群</button></div>'}
+    else{
+      mh+='<div style="margin:6px 0;font-size:12px;color:#6b675c">成员：'
+        +c.members.map(m=>esc((PLAYERS[m]||{}).name||m)).join("、")+'</div>';
+      mh+='<div><button class="ghost" onclick="leaveGroup(\''+c.id+'\')">退出群聊</button>';
+      if(isOwner){
+        for(const m of c.members){
+          if(m===mine)continue;
+          mh+=' <button class="ghost" onclick="kickMember(\''+c.id+'\',\''+m+'\')">移出'+esc((PLAYERS[m]||{}).name||m)+'</button>';
+        }
+      }
+      mh+='</div>';
+    }
+  }
+  mg.innerHTML=mh;
+}
+function voteJoin(cid,pid,approve){
+  socket.emit("group_join_vote",{room_id:ROOM_ID,player_id:MY_PID,cid,approve});
+}
+function reqJoin(cid){socket.emit("group_join_req",{room_id:ROOM_ID,player_id:MY_PID,cid})}
+function leaveGroup(cid){socket.emit("group_leave",{room_id:ROOM_ID,player_id:MY_PID,cid})}
+function kickMember(cid,target){socket.emit("group_kick",{room_id:ROOM_ID,player_id:MY_PID,cid,target})}
+// —— 建群 ——
+function openGroup(){
+  const el=document.getElementById("grpMembers");
+  let h="";
+  for(const pid in PLAYERS){
+    if(pid===String(MY_PID)||PLAYERS[pid].is_spectator)continue;
+    h+='<label class="mrow"><input type="checkbox" value="'+pid+'"> '+esc(PLAYERS[pid].name)+'</label>';
+  }
+  el.innerHTML=h||'<div class="dim">没有可邀请的玩家</div>';
+  document.getElementById("grpName").value="";
+  document.getElementById("grpModal").style.display="block";
+}
+function closeGroup(){document.getElementById("grpModal").style.display="none"}
+function confirmGroup(){
+  const name=document.getElementById("grpName").value.trim();
+  const members=[...document.querySelectorAll("#grpMembers input:checked")].map(x=>x.value);
+  if(!members.length){toast("请至少选择一名成员");return}
+  socket.emit("group_create",{room_id:ROOM_ID,player_id:MY_PID,name,members});
+  closeGroup();
+}
 
 // ---------- 横幅 ----------
 function showBanner(msg,auto){
@@ -1143,6 +1396,16 @@ function havKm(A,B){
   const h=Math.sin(dlat/2)**2+Math.cos(A.lat*p)*Math.cos(B.lat*p)*Math.sin(dlon/2)**2;
   return 6371*2*Math.asin(Math.sqrt(h));
 }
+function armySpeed(a){
+  // 当前段速度：陆 83km/s，海 166km/s
+  const legs=a.legs||[];
+  let cum=0;
+  for(const leg of legs){
+    cum+=leg.km;
+    if(a.pos_km<cum)return leg.mode==="sea"?166:83;
+  }
+  return 83;
+}
 function w2s(lon,lat,oxOff){
   return [X(lon)*scale+oxOff,Y(lat)*scale+oy];
 }
@@ -1150,7 +1413,7 @@ function drawUnits(){
   const t=performance.now();
   for(const k in BATTLES){
     const b=BATTLES[k];
-    const rg=REG[+k];
+    const rg=b.sea?{lon:b.lon,lat:b.lat}:REG[+k];
     if(!rg)continue;
     for(const oxOff of copiesVisible()){
       const [sx,sy]=w2s(rg.lon,rg.lat,oxOff);
@@ -1174,11 +1437,26 @@ function drawUnits(){
     for(const oxOff of copiesVisible()){
       const [sx,sy]=w2s(p.lon,p.lat,oxOff);
       if(sx<-40||sx>cv.width/DPR+40||sy<-40||sy>cv.height/DPR+40)continue;
-      ctx.beginPath();ctx.arc(sx,sy,8,0,Math.PI*2);
-      ctx.fillStyle=col;ctx.fill();
-      ctx.lineWidth=1.5;ctx.strokeStyle=(a.id===SEL_ARMY)?"#ffd54f":"#fff";ctx.stroke();
-      ctx.font="bold 10px sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";
-      ctx.fillStyle="#fff";ctx.fillText(fmt(a.troops),sx,sy);
+      if(a.sea){
+        // 海上军队：船形标记（帆船三角+船体）
+        ctx.beginPath();
+        ctx.moveTo(sx,sy-9);ctx.lineTo(sx+7,sy-1);ctx.lineTo(sx-7,sy-1);ctx.closePath();
+        ctx.fillStyle=col;ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(sx-9,sy-1);ctx.lineTo(sx+9,sy-1);ctx.lineTo(sx+5,sy+6);ctx.lineTo(sx-5,sy+6);ctx.closePath();
+        ctx.fillStyle=col;ctx.globalAlpha=.75;ctx.fill();ctx.globalAlpha=1;
+        ctx.lineWidth=1.5;ctx.strokeStyle=(a.id===SEL_ARMY)?"#ffd54f":"#fff";ctx.stroke();
+        ctx.font="bold 9px sans-serif";ctx.textAlign="center";ctx.textBaseline="top";
+        ctx.lineWidth=3;ctx.strokeStyle="rgba(250,248,242,.9)";
+        ctx.strokeText(fmt(a.troops),sx,sy+8);
+        ctx.fillStyle="#fff";ctx.fillText(fmt(a.troops),sx,sy+8);
+      }else{
+        ctx.beginPath();ctx.arc(sx,sy,8,0,Math.PI*2);
+        ctx.fillStyle=col;ctx.fill();
+        ctx.lineWidth=1.5;ctx.strokeStyle=(a.id===SEL_ARMY)?"#ffd54f":"#fff";ctx.stroke();
+        ctx.font="bold 10px sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";
+        ctx.fillStyle="#fff";ctx.fillText(fmt(a.troops),sx,sy);
+      }
     }
   }
   if(MOVE_MODE){
@@ -1473,6 +1751,7 @@ function cancelMoveMode(){
   if(MOVE_MODE||PEND_SEND){MOVE_MODE=null;PEND_SEND=null;renderPanel()}
 }
 function act(actName,args){
+  if(PAUSED){toast("游戏已暂停，操作冻结");return}
   socket.emit("mm_action",{room_id:ROOM_ID,player_id:MY_PID,act:actName,args:args||{}});
 }
 function confirmPick(){
@@ -1487,6 +1766,11 @@ function recruitSel(){
   const inp=document.getElementById("recruitCount");
   const n=Math.max(1,parseInt(inp&&inp.value||"0",10)||0);
   act("recruit",{region:SEL,count:n});
+}
+function disbandSel(){
+  const inp=document.getElementById("disbandCount");
+  const n=Math.max(1,parseInt(inp&&inp.value||"0",10)||0);
+  act("disband",{region:SEL,count:n});
 }
 let PEND_SEND=null; // {from,to} 待确认出兵（面板内输入数量，替代原生 prompt）
 function askSend(from,to){
@@ -1522,7 +1806,8 @@ function renderPanel(){
     h+='<div><span class="own" style="background:'+(pColor(a.pid)||"#777")+'"></span>'+esc((PLAYERS[a.pid]||{}).name||"?")+(a.pid===MY_PID?"（你）":"")+'</div>';
     h+='<div>兵力 '+fmt(a.troops)+'</div>';
     h+='<div class="dim">'+esc(from?from.n:"?")+' → '+esc(to?to.n:"?")+'</div>';
-    h+='<div>行军进度 '+prog+'%（'+fmt(a.pos_km)+'/'+fmt(a.total_km)+' km，83km/s）</div>';
+    const spd=armySpeed(a);
+    h+='<div>行军进度 '+prog+'%（'+fmt(a.pos_km)+'/'+fmt(a.total_km)+' km，'+spd+'km/s'+(a.sea?" · 海上":"")+'）</div>';
     const dest=to?to.n:null;
     if(dest&&a.pid===MY_PID)h+='<div class="dim">抵达后：无主地驻扎 / 敌方或他人驻军地开战</div>';
     setHTMLIfChanged(p,h);p.style.display="block";return;
@@ -1540,14 +1825,8 @@ function renderPanel(){
   h+='<div class="dim">'+esc(rg.c)+" · ≈"+fmt(rg.a)+' km²</div>';
   if(picking){
     h+='<div>初始人口 '+fmt(rg.a*2)+' · 预计启动资金 '+fmt(startMoney(rg.a))+' 元</div>';
-    const ps=Object.keys(PICKS).filter(pid=>PICKS[pid]===SEL);
-    for(const pid of ps){
-      h+='<div class="row"><span class="own" style="background:'+(pColor(pid)||"#777")+'"></span>'+esc((PLAYERS[pid]||{}).name||"?");
-      h+=CONFLICTS.includes(SEL)?' <span style="color:#8c3b2e">⚠ 冲突</span>':"";
-      h+='</div>';
-    }
     if(spec){h+='<div class="dim">你是观战者，不能选地</div>'}
-    else if(myPick){h+='<div>✅ 已选此地'+(CONFLICTS.includes(SEL)?'（冲突！点击其他地块重选）':"")+'</div>'}
+    else if(myPick){h+='<div>✅ 已选此地（保密）'+(CONFLICTS.includes(SEL)?'（冲突！点击其他地块重选）':"")+'</div>'}
     else h+='<button onclick="confirmPick()">选为出生地</button>';
     setHTMLIfChanged(p,h);p.style.display="block";return;
   }
@@ -1583,10 +1862,11 @@ function renderPanel(){
     for(const q of r.queue){const sp=BLD[q.type];if(sp)bl.push('<span class="tag">🏗'+sp.name+q.lvl+" "+Math.ceil(q.left)+"s</span>")}
     if(bl.length)h+='<div>'+bl.join("")+'</div>';
   }else if(opid!=null&&opid!==MY_PID){
-    // 他人地块：模糊情报
+    // 他人地块：人口可见（地图全明），军情默认雾
     const it=INTEL[SEL]&&INTEL[SEL].info;
     if(it&&it.pop_approx!==undefined){
-      h+='<div class="dim">情报：人口约 '+fmt(it.pop_approx)+' · 驻军约 '+fmt(it.troops_approx)+' · 设施 '+it.b_cnt+' 座</div>';
+      if(it.mil_fog)h+='<div class="dim">情报：人口约 '+fmt(it.pop_approx)+' · <b style="color:#6b6353">驻军情报：雾 🔒</b></div>';
+      else h+='<div class="dim">情报：人口约 '+fmt(it.pop_approx)+' · 驻军约 '+fmt(it.troops_approx)+' · 设施 '+it.b_cnt+' 座</div>';
     }else{
       h+='<div class="dim">情报收集中…</div>';
       socket.emit("mm_region_info",{room_id:ROOM_ID,player_id:MY_PID,region:SEL});
@@ -1623,9 +1903,16 @@ function renderPanel(){
     }
     if(mineR.troops>0){
       h+='<div style="margin-top:6px"><button onclick="MOVE_MODE={from:'+SEL+'};renderPanel()">⚔ 出兵（点击后选目的地）</button></div>';
+      h+='<div><input id="disbandCount" type="number" min="1" max="'+mineR.troops+'" value="'+mineR.troops+'">'
+        +'<button class="ghost" onclick="disbandSel()">解散军队（不返钱）</button></div>';
+    }
+    if(mineR.owner===MY_PID){
+      h+='<div style="margin-top:4px"><button class="ghost" onclick="act(\'set_mil\',{region:'+SEL+',public:'+(mineR.public_mil?"false":"true")+'})">'
+        +(mineR.public_mil?"🔒 隐藏该地军情（雾）":"👁 公开该地驻军情报")+'</button>'
+        +'<span class="dim" style="margin-left:6px">当前：'+(mineR.public_mil?"公开":"雾")+'</span></div>';
     }
     if(MOVE_MODE&&MOVE_MODE.from===SEL){
-      h+='<div style="color:#8c3b2e">点击地图上的目的地出兵（83km/s，右键取消）</div>';
+      h+='<div style="color:#8c3b2e">点击地图上的目的地出兵（陆83/海166km/s · 跨海须出发地已建港口，右键取消）</div>';
     }
   }else if(opid==null){
     const price=Math.round(rg.a*(MY&&MY.colonize_price||1));
