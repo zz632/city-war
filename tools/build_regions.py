@@ -56,8 +56,10 @@ def main():
     print('解析完成: nf=%d npts=%d (%.1fs)' % (nf, npts, time.time() - t0))
 
     def px_to_lonlat(x, y):
+        # 二进制为 78°N 顶的墨卡托（前端加载时 +Y_SHIFT 转为 85°N 顶显示约定），
+        # 因此这里必须用 78°N 顶公式反解纬度，否则纬度整体偏高（法国会被算到 70°N）
         lon = x / (PPR * math.pi / 180) - 180
-        ym = math.log(math.tan(math.pi / 4 + (85 * math.pi / 180) / 2)) - y / PPR
+        ym = math.log(math.tan(math.pi / 4 + (78 * math.pi / 180) / 2)) - y / PPR
         lat = (2 * math.atan(math.exp(ym)) - math.pi / 2) * 180 / math.pi
         return round(lon, 3), round(lat, 3)
 

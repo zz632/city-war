@@ -556,8 +556,8 @@ const BLD={
 let BOX,FR,ROFF,C,FR2,ROFF2,C2,FRr,ROFFr,Cr,nf=0;
 let WB,WF,WROFF,WC,WB2,WF2,WROFF2,WC2,RB,RF,RC,RW1,RB2,RF2,RC2,RW2,nl=0,nl2=0,nriv=0,nriv2=0;
 let ATAI=-1;
-let DATAV="0b151c46a52757b6ea65c6bb99aeb3e5";
-let WATERV="a684fa86757ab29552e6ef9131aa4a0d";
+let DATAV="0b151c46a52757b6ea65c6bb99aeb3e5.r2"; // .r2：历史上 DATAV 更新时旧版二进制仍在线上，部分客户端缓存了 78°N/85°N 投影不一致的旧数据（整体偏移一个 Y_SHIFT），追加后缀强制全部重新下载
+let WATERV="a684fa86757ab29552e6ef9131aa4a0d.r2";
 const SNAPV=2; // 快照渲染版本：底图样式/投影变更时 +1 使缓存失效
 function isGz(b){try{const u=new Uint8Array(b,0,2);return u[0]===0x1f&&u[1]===0x8b}catch(e){return false}}
 async function gunzip(b){const ds=new Blob([b]).stream().pipeThrough(new DecompressionStream("gzip"));return await new Response(ds).arrayBuffer()}
