@@ -1026,7 +1026,10 @@ async function loadData(){
 }
 // ---------- 空间索引 / 拾取 ----------
 const CS=2,GRD=new Map(),BIG=[];
+let EMPTY2=null;   // 粗版几何缺环的地块（上游简化时丢弃的小岛屿）：绘制时回退精版，避免缩小视图成海
 function buildGrid(){
+  EMPTY2=new Set();
+  for(let i=0;i<nf;i++)if(FR2[i+1]===FR2[i])EMPTY2.add(i);
   for(let i=0;i<nf;i++){
     if(i===ATAI)continue;
     const a=BOX[i*4],b=BOX[i*4+1],e=BOX[i*4+2],d=BOX[i*4+3];
@@ -1118,10 +1121,13 @@ function focusMyRegion(){
   if(MY_PICK!=null&&MY_PICK>=0)focusRegion(MY_PICK);
 }
 function addRings(g,i){
-  for(let r=FRr[i];r<FRr[i+1];r++){
-    const s=ROFFr[r]*2,t=ROFFr[r+1]*2;
-    g.moveTo(Cr[s]*scale+OX,Cr[s+1]*scale+oy);
-    for(let a=s+2;a<t;a+=2)g.lineTo(Cr[a]*scale+OX,Cr[a+1]*scale+oy);
+  // 粗版几何缺环的地块回退精版顶点，避免缩小视图时该地块消失成海
+  let F=FRr,O=ROFFr,CC=Cr;
+  if(F===FR2&&F[i+1]===F[i]){F=FR;O=ROFF;CC=C}
+  for(let r=F[i];r<F[i+1];r++){
+    const s=O[r]*2,t=O[r+1]*2;
+    g.moveTo(CC[s]*scale+OX,CC[s+1]*scale+oy);
+    for(let a=s+2;a<t;a+=2)g.lineTo(CC[a]*scale+OX,CC[a+1]*scale+oy);
     g.closePath();
   }
 }
@@ -1135,7 +1141,7 @@ function drawLand(cand,wx0,wx1,wy0,wy1){
     const a=BOX[i*4],b=BOX[i*4+1],e=BOX[i*4+2],d=BOX[i*4+3];
     if(e<wx0||a>wx1||d<wy0||b>wy1)return;
     const wpx=(e-a)*scale,hpx=(d-b)*scale;
-    if(wpx<.7&&hpx<.7)return;
+    if(wpx<.7&&hpx<.7&&!(EMPTY2&&EMPTY2.has(i)))return;
     arr.push(i);
   };
   if(cand){for(const i of cand)put(i)}
