@@ -65,6 +65,14 @@ class MapModeManager:
                         game._finish_pushed = True
                         if self.full_state_cb:
                             self.full_state_cb(room_id, game)
+                        if self._sio:
+                            try:
+                                self._sio.emit('mm_phase', {
+                                    'phase': 'finished',
+                                    'summary': game.finish_summary(),
+                                }, room=room_id)
+                            except Exception as e:
+                                print('[MapMode] 结算推送异常 room=%s: %r' % (room_id, e))
                 except Exception as e:
                     print('[MapMode] tick 异常 room=%s: %r' % (room_id, e))
             # 每 5 秒全量兜底：mine 详情（人口/驻军/建造进度）不在增量里

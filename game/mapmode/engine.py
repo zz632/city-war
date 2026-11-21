@@ -94,6 +94,7 @@ class MapGame:
         """players: {pid: {'name':..., 'color':...}}（非观战者）"""
         self.room_id = room_id
         self.phase = 'picking'  # picking → playing → finished
+        self.elim_order = []    # 出局顺序（pid 列表，供终局结算）
         self.players = {pid: MapPlayer(pid, p['name'], p['color'])
                         for pid, p in players.items()}
         self.regions = {}       # i -> RegionState（仅被占/有驻军的地块）
@@ -410,6 +411,7 @@ class MapGame:
                         and not any(a['pid'] == pid for a in self.armies) \
                         and not any(b['atk_pid'] == pid for b in self.battles.values()):
                     p.alive = False
+                    self.elim_order.append(pid)
                     dirty_players.add(pid)
             alive = [p for p in self.players.values() if p.alive]
             if len(alive) <= 1 and self.phase == 'playing':
@@ -419,6 +421,21 @@ class MapGame:
 
             self._gen += 1
             return {'dirty_regions': dirty_regions, 'dirty_players': dirty_players}
+
+    def finish_summary(self):
+        """终局结算：胜者 + 出局顺序 + 存活者最终地块数"""
+        def _land(pid):
+            return sum(1 for r in self.regions.values() if r['owner'] == pid)
+        def _nm(pid):
+            p = self.players.get(pid)
+            return p.name if p else '?'
+        return {
+            'winner': self.winner,
+            'elim': [{'pid': pid, 'name': _nm(pid), 'land': _land(pid)}
+                     for pid in self.elim_order],
+            'alive': [{'pid': p.pid, 'name': p.name, 'land': _land(p.pid)}
+                      for p in self.players.values() if p.alive],
+        }
 
     def _army_arrive(self, army, dirty_regions):
         """军队抵达目的地：

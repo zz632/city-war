@@ -204,6 +204,7 @@ let SEL=-1, SEL_ARMY=0, MOVE_MODE=null, MY_PICK=-1;
 let PICKS={}, CONFLICTS=[], HOST_ID="";
 let ISLAND_OPEN=true;
 let INTEL={};   // i -> {info, ts}（他人地块模糊情报缓存）
+let SUMMARY=null; // 终局结算 {winner, elim:[{pid,name,land}], alive:[{pid,name,land}]}
 function pColor(pid){
   if(pid==null)return null;
   if(COLORS[pid])return COLORS[pid];
@@ -251,6 +252,7 @@ socket.on("mm_delta",d=>{
 });
 socket.on("mm_phase",d=>{
   PHASE=d.phase;
+  SUMMARY=(d.phase==="finished"&&d.summary)?d.summary:null;
   if(d.phase!=="playing")focusedOnPlay=false;
   if(d.phase==="playing"){
     hideBanner();showBanner("游戏开始！",2600);setTimeout(hideBanner,2800);
@@ -372,6 +374,17 @@ function renderIsland(){
       h+='<div class="row"'+(dead?' style="opacity:.45"':'')+'><span class="dot" style="background:'+col+'"></span>'
         +esc(p.name)+(pid===MY_PID?"（你）":"")+(dead?" · 已出局":"")
         +(pid===HOST_ID?'<span class="pid-tag">房主</span>':'')+'</div>';
+    }
+    if(PHASE==="finished"&&SUMMARY){
+      h+='<h4>终局结算</h4>';
+      const wc=pColor(SUMMARY.winner)||"#777";
+      h+='<div style="color:'+wc+'"><b>🏆 '+esc((PLAYERS[SUMMARY.winner]||{}).name||"?")+' 获胜</b></div>';
+      if(SUMMARY.elim&&SUMMARY.elim.length){
+        h+='<div class="dim" style="font-size:12px">出局顺序：'
+          +SUMMARY.elim.map(e=>esc(e.name)+"（"+e.land+" 地块）").join(" → ")+'</div>';
+      }
+      h+='<div class="dim" style="font-size:12px">最终地块：'
+        +SUMMARY.alive.map(a=>esc(a.name)+" "+a.land).join(" · ")+'</div>';
     }
   }else{
     h+='<div style="color:#9d978a">连接中…</div>';
@@ -1272,13 +1285,19 @@ function draw(){
     }
   }else{
     const fine=!idleT;
-    const viewChanged=!lastFine||lastFS.scale<=0||scale!==lastFS.scale||ox!==lastFS.ox||oy!==lastFS.oy;
+    // ox 会被 wrapOx 回绕（跨日界线拖动）：贴图偏移按整张世界宽度取最近副本，避免底图整体错位
+    const f=(lastFS.scale>0)?scale/lastFS.scale:1;
+    const ws=W*scale;
+    const xRaw=ox-lastFS.ox*f;
+    const dx=xRaw-Math.round(xRaw/ws)*ws;
+    const viewChanged=!lastFine||lastFS.scale<=0||scale!==lastFS.scale
+      ||oy!==lastFS.oy||Math.abs(dx)>0.5;
     if(!viewChanged){
       // 视图未变（每秒增量广播触发的重绘）：直接复用上帧底图，仅覆盖层重绘，消除周期性卡顿
       ctx.drawImage(lastFine,0,0,vw,vh);
-    }else if(!fine&&lastFine&&lastFS.scale>0){
-      const f=scale/lastFS.scale;
-      ctx.drawImage(lastFine,ox-lastFS.ox*f,oy-lastFS.oy*f,vw*f,vh*f);
+    }else if(!fine&&lastFine&&lastFS.scale>0&&dx<=0.5&&dx+vw*f>=vw-0.5){
+      // 交互期缩放/平移：按最近的世界副本贴上缓存底图（缓存覆盖不足时才全量重绘）
+      ctx.drawImage(lastFine,dx,oy-lastFS.oy*f,vw*f,vh*f);
     }else{
       FRr=fine?FR:FR2;ROFFr=fine?ROFF:ROFF2;Cr=fine?C:C2;
       const ws=W*scale;
@@ -1451,7 +1470,7 @@ function doPick(i){
   socket.emit("mm_pick",{room_id:ROOM_ID,player_id:MY_PID,region:i});
 }
 function cancelMoveMode(){
-  if(MOVE_MODE){MOVE_MODE=null;renderPanel()}
+  if(MOVE_MODE||PEND_SEND){MOVE_MODE=null;PEND_SEND=null;renderPanel()}
 }
 function act(actName,args){
   socket.emit("mm_action",{room_id:ROOM_ID,player_id:MY_PID,act:actName,args:args||{}});
@@ -1469,15 +1488,25 @@ function recruitSel(){
   const n=Math.max(1,parseInt(inp&&inp.value||"0",10)||0);
   act("recruit",{region:SEL,count:n});
 }
+let PEND_SEND=null; // {from,to} 待确认出兵（面板内输入数量，替代原生 prompt）
 function askSend(from,to){
   const mine=MY&&MY.mine&&MY.mine[from];
   const troops=mine?mine.troops:0;
-  const v=prompt("出兵数量（该地驻军 "+fmt(troops)+"）:",String(troops));
   MOVE_MODE=null;
-  if(v===null)return;
-  const n=parseInt(v,10)||0;
-  if(n<=0||n>troops){toast("兵力数量无效");return}
-  act("send",{from:from,to:to,count:n});
+  if(troops<=0){toast("该地无驻军可出");return}
+  PEND_SEND={from,to};
+  SEL=to;SEL_ARMY=0;
+  renderPanel();schedule();
+}
+function confirmSend(){
+  const inp=document.getElementById("sendCount");
+  const n=Math.max(1,parseInt(inp&&inp.value||"0",10)||0);
+  const mine=PEND_SEND&&MY&&MY.mine&&MY.mine[PEND_SEND.from];
+  const troops=mine?mine.troops:0;
+  if(!PEND_SEND||n<=0||n>troops){toast("兵力数量无效");return}
+  act("send",{from:PEND_SEND.from,to:PEND_SEND.to,count:n});
+  PEND_SEND=null;SEL=-1;
+  renderPanel();schedule();
 }
 // ---------- 面板 ----------
 function closePanel(){SEL=-1;SEL_ARMY=0;renderPanel();schedule()}
@@ -1537,6 +1566,14 @@ function renderPanel(){
     const b=BATTLES[SEL];
     h+='<div style="color:#8c3b2e">⚔ 交战中: '+esc((PLAYERS[b.atk_pid]||{}).name||"?")+" "+fmt(b.atk_troops)
       +" vs "+fmt(b.def_troops)+" "+esc((PLAYERS[b.def_pid]||{}).name||"?")+'</div>';
+  }
+  if(PEND_SEND&&PEND_SEND.to===SEL){
+    const st=(MY&&MY.mine&&MY.mine[PEND_SEND.from])?MY.mine[PEND_SEND.from].troops:0;
+    h+='<div style="background:#efe9db;border-radius:3px;padding:6px 8px;margin-top:6px">向 <b>'+esc(rg.n)
+      +'</b> 出兵（出发地驻军 '+fmt(st)+'）</div>'
+      +'<div><input id="sendCount" type="number" min="1" max="'+st+'" value="'+st+'">'
+      +'<button onclick="confirmSend()">确认出兵</button>'
+      +'<button class="ghost" onclick="cancelMoveMode()">取消</button></div>';
   }
   if(mineR||mine){
     const r=mineR||mine;
