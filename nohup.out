@@ -1,2 +1,0 @@
-/Library/Frameworks/Python.framework/Versions/3.8/lib/python3.8/site-packages/pymongo/pyopenssl_context.py:29: CryptographyDeprecationWarning: Python 3.8 is no longer supported by the Python core team and support for it is deprecated in cryptography. The next release of cryptography will remove support for Python 3.8.
-  import cryptography.x509 as x509

@@ -15,3 +15,6 @@ CHANGELOG.local.md
 
 # npm 打包用的临时拼装文件(由 part0-7 拼装, 勿提交)
 static/map/map_world.bin
+
+nohup.out
+.screenshots/.tmp/
