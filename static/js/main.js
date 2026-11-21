@@ -399,9 +399,8 @@ function showVersionModal(name) {
                 <div class="vo-head">
                     <span class="vo-name">新版 · 世界地图</span>
                     <span class="badge badge-gold">推荐</span>
-                    <span class="badge badge-gray">一期</span>
                 </div>
-                <div class="vo-desc">真实时大乱斗：选地出生 / 殖民 / 建造 / 征兵 / 陆战（建筑与海战陆续实装）</div>
+                <div class="vo-desc">真实时大乱斗：选地保密 / 殖民 / 建造 / 征兵 / 陆战海战 / 视野迷雾 / 投票暂停 / 外交私聊群聊</div>
             </div>
             <div class="version-option" id="ver-old">
                 <div class="vo-head"><span class="vo-name">旧版 · 经典模式</span></div>
